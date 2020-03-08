@@ -25,6 +25,8 @@
 // SOFTWARE.
 //
 
+pub(crate) mod process;
+
 #[cfg(test)]
 mod tests {
     #[test]
