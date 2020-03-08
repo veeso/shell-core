@@ -14,6 +14,8 @@ description = "Shell core is a library which provides the core functionality to 
 [dependencies]
 nix = "0.17.0"
 subprocess = "0.2.4"
+whoami = "0.8.1"
+dirs = "2.0.2"
 
 [lib]
 name = "shellcore"

@@ -7,7 +7,7 @@
 //   Developed by Christian Visintin
 //
 // MIT License
-// Copyright (c) 2019-2020 Christian Visintin
+// Copyright (c) 2020 Christian Visintin
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -25,12 +25,81 @@
 // SOFTWARE.
 //
 
+pub mod core;
 pub(crate) mod process;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+/// ## ShellCore Struct
+/// 
+/// The shell core is the main shell core access point and contains all the data necessary to run a shell.
+/// It also provides all the functions which a shell must provide
+pub struct ShellCore {
+    pub state: ShellState, //Shell state
+    pub exit_code: u8, //Exitcode of the last executed command
+    pub execution_time: Duration, //Execution time of the last executed command
+    pub pid: Option<u32>, //Pid of the current process
+    pub wrk_dir: PathBuf, //Working directory
+    pub user: String, //Username
+    pub hostname: String, //Hostname
+    home_dir: PathBuf, //User home directory
+    prev_dir: PathBuf, //Previous directory
+    execution_started: Instant, //The instant when the last process was started
+    storage: HashMap<String, String>, //Session storage
+    history: Vec<String>, //Shell history
+    parser: Box<dyn ParseStatement>, //Parser
+    buf_in: String //Input buffer
+}
+
+/// ## ShellState
+/// 
+/// The shell state describes the current shell state and is very useful to choose the behaviour of your shell (for example to print or not the prompt etc)
+/// The states are described here below
+/// 
+/// Idle: the shell is doing nothing and is waiting for new commands
+/// Waiting: the shell is waiting for further inputs (for example there is an incomplete expression in the buffer)
+/// Busy: the shell is busy running a process
+/// Terminated: the shell has terminated
+#[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
+pub enum ShellState {
+    Idle,
+    Waiting,
+    Busy,
+    Terminated
+}
+
+/// ## ParserError
+/// 
+/// the Parser error struct describes the error returned by the parser
+pub struct ParserError {
+    code: ParseErrorCode,
+    message: String
+}
+
+/// ## ParserErrorCode
+/// 
+/// The parser error code describes in a generic way the error type
+/// 
+/// - Incomplete: the statement is incomplete, further input is required. This should bring the Core to Waiting state
+/// - BadToken: a bad token was found in the statement
+#[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
+pub enum ParseErrorCode {
+    Incomplete,
+    BadToken
+}
+
+/// ## ParseStatement
+///
+/// ParseStatement is the trait which must be implemented by a shell parser engine (e.g. bash, fish, zsh...)
+pub trait ParseStatement {
+    
+    /// ### parse
+    /// 
+    /// The parse method MUST parse the statement and IF VALID perform an action provided by the ShellCore
+    /// 
+    /// e.g. if the statement is a variable assignment, the method MUST call the shellcore set method.
+    /// Obviously, in case of error the core method hasn't to be called
+    fn parse(&self, statement: String) -> Result<(), ParserError>;
 }
