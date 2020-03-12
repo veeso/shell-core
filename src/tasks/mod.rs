@@ -55,9 +55,9 @@ pub(crate) struct Task {
 /// TaskManager is the struct which handles the Task pipeline execution
 pub(crate) struct TaskManager {
     running: Arc<Mutex<bool>>, //Running state
-    m_loop: Option<thread::JoinHandle<Result<u8, TaskError>>>, //Returns exitcode or TaskError in join handle
-    pub receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
-    pub sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages
+    m_loop: Option<thread::JoinHandle<u8>>, //Returns exitcode or TaskError in join handle
+    receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
+    sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages
     next: Option<Task> //NOTE: Option because has to be taken by thread
 }
 
@@ -116,7 +116,8 @@ pub(crate) enum TaskMessageTx {
 /// 
 /// Messages to be sent from Task back to shell
 pub(crate) enum TaskMessageRx {
-    Output((String, String)) //Task Output (Stdout, Stderr)
+    Output((Option<String>, Option<String>)), //Task Output (Stdout, Stderr)
+    Error(TaskError) //Report error
 }
 
 //@! TaskError
