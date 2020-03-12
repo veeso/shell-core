@@ -78,7 +78,7 @@ impl Task {
             //Start next process
             if self.next.is_some() {
                 if let Err(err) = self.next.as_mut().unwrap().start() {
-                    return Err(err);
+                    return Err(TaskError::new(TaskErrorCode::BrokenPipe, String::from("Failed to start next process in the pipeline")));
                 }
             }
         }
@@ -485,6 +485,29 @@ mod tests {
         assert!(!task.is_running());
         //Get exitcode
         assert_eq!(task.get_exitcode().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_task_pipeline_with_pipe_mode_failed() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("THISCOMMANDDOESNOTEXIST")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Pipe,
+        );
+        assert_eq!(task.relation, TaskRelation::Pipe);
+        //Verify next is something
+        assert!(task.next.is_some());
+        //Start process
+        assert_eq!(task.start().err().unwrap().code, TaskErrorCode::BrokenPipe);
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Process should not be running
+        assert!(!task.is_running());
     }
 
     #[test]
