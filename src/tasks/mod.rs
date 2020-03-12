@@ -40,7 +40,7 @@ use std::thread;
 /// ## Task
 ///
 /// Task is the entity which describes a single Task and the relation with the next Task in the pipeline
-struct Task {
+pub(crate) struct Task {
     command: Vec<String>,            //Command argv
     process: Option<Process>,        //Current process in task
     stdout_redirection: Redirection, //Stdout Redirection type
@@ -106,7 +106,7 @@ pub(crate) enum TaskRelation {
 /// ## TaskMessageTx
 /// 
 /// Messages to be sent from shell to Task
-enum TaskMessageTx {
+pub(crate) enum TaskMessageTx {
     Input(String), //Send Input
     Kill, //Kill process
     Signal(crate::UnixSignal) //Send signal
@@ -115,7 +115,7 @@ enum TaskMessageTx {
 /// ## TaskMessageRx
 /// 
 /// Messages to be sent from Task back to shell
-enum TaskMessageRx {
+pub(crate) enum TaskMessageRx {
     Output((String, String)) //Task Output (Stdout, Stderr)
 }
 

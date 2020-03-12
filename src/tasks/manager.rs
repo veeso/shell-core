@@ -37,7 +37,7 @@ impl TaskManager {
     /// 
     /// Instantiate a new TaskManager
     /// The first task in the task pipeline has to be provided
-    pub fn new(first_task: Task) -> TaskManager {
+    pub(crate) fn new(first_task: Task) -> TaskManager {
         TaskManager {
             running: Arc::new(Mutex::new(false)),
             m_loop: None,
