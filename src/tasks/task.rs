@@ -25,9 +25,9 @@
 // SOFTWARE.
 //
 
-use super::process::{Process, ProcessError};
+use super::process::Process;
 use super::{Redirection, Task, TaskError, TaskErrorCode, TaskRelation};
-use crate::FileRedirectionType;
+use crate::{FileRedirectionType, UnixSignal};
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -99,7 +99,7 @@ impl Task {
     /// read
     ///
     /// Read or redirect command output
-    pub fn read(&mut self) -> Result<(String, String), TaskError> {
+    pub fn read(&mut self) -> Result<(Option<String>, Option<String>), TaskError> {
         match &mut self.process {
             None => Err(TaskError::new(
                 TaskErrorCode::ProcessTerminated,
@@ -128,6 +128,14 @@ impl Task {
                         ) {
                             return Err(err);
                         }
+                        let res_stdout: Option<String> = match res_stdout.len() {
+                            0 => None,
+                            _ => Some(res_stdout),
+                        };
+                        let res_stderr: Option<String> = match res_stderr.len() {
+                            0 => None,
+                            _ => Some(res_stderr),
+                        };
                         Ok((res_stdout, res_stderr))
                     }
                     Err(e) => Err(TaskError::new(
@@ -140,7 +148,7 @@ impl Task {
     }
 
     /// ### write
-    /// 
+    ///
     /// Write to process stdin
     pub fn write(&mut self, input: String) -> Result<(), TaskError> {
         match &mut self.process {
@@ -148,38 +156,72 @@ impl Task {
                 TaskErrorCode::ProcessTerminated,
                 String::from("Process is not running"),
             )),
-            Some(p) => {
-                match p.write(input) {
-                    Ok(()) => Ok(()),
-                    Err(err) => Err(TaskError::new(TaskErrorCode::IoError, format!("Could not write to process stdin {}", err)))
-                }
-            }
+            Some(p) => match p.write(input) {
+                Ok(()) => Ok(()),
+                Err(err) => Err(TaskError::new(
+                    TaskErrorCode::IoError,
+                    format!("Could not write to process stdin {}", err),
+                )),
+            },
         }
     }
 
-    //TODO: kill
-    //TODO: signal
+    /// ### kill
+    ///
+    /// Kill running task
+    pub fn kill(&mut self) -> Result<(), TaskError> {
+        match &mut self.process {
+            None => Err(TaskError::new(
+                TaskErrorCode::ProcessTerminated,
+                String::from("Process is not running"),
+            )),
+            Some(p) => match p.kill() {
+                Ok(()) => Ok(()),
+                Err(()) => Err(TaskError::new(
+                    TaskErrorCode::KillError,
+                    String::from("It was not possible to kill process"),
+                )),
+            },
+        }
+    }
+
+    /// ### raise
+    ///
+    /// Raise a signal on the process
+    pub fn raise(&mut self, signal: UnixSignal) -> Result<(), TaskError> {
+        match &mut self.process {
+            None => Err(TaskError::new(
+                TaskErrorCode::ProcessTerminated,
+                String::from("Process is not running"),
+            )),
+            Some(p) => match p.raise(signal) {
+                Ok(()) => Ok(()),
+                Err(()) => Err(TaskError::new(
+                    TaskErrorCode::KillError,
+                    String::from("It was not possible to send signal to process"),
+                )),
+            },
+        }
+    }
 
     /// ### is_running
-    /// 
+    ///
     /// Returns whether the process is running. If the process has terminated, the exitcode will be set
     pub fn is_running(&mut self) -> bool {
         match &mut self.process {
-            Some(p) => {
-                match p.is_running() {
-                    true => true,
-                    false => {
-                        self.exit_code = p.exit_status.clone();
-                        false
-                    }
+            Some(p) => match p.is_running() {
+                true => true,
+                false => {
+                    self.exit_code = p.exit_status.clone();
+                    false
                 }
             },
-            None => false
+            None => false,
         }
     }
 
     /// ### get_exitcode
-    /// 
+    ///
     /// Return task's exitcode
     pub fn get_exitcode(&self) -> Option<u8> {
         self.exit_code.clone()
@@ -231,7 +273,7 @@ impl Task {
             .open(file.as_str())
         {
             Ok(mut f) => {
-                if let Err(e) = writeln!(f, "{}", out) {
+                if let Err(e) = write!(f, "{}", out) {
                     Err(TaskError::new(
                         TaskErrorCode::IoError,
                         format!("Could not write to file {}: {}", file, e),
@@ -245,5 +287,319 @@ impl Task {
                 format!("Could not open file {}: {}", file, e),
             )),
         }
+    }
+}
+
+//@! Module Test
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    use std::fs::File;
+    use std::io::Read;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    #[test]
+    fn test_task_new() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foobar")];
+        let task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Verify constructor
+        assert!(task.exit_code.is_none());
+        assert!(task.process.is_none());
+        assert!(task.next.is_none());
+        assert_eq!(task.relation, TaskRelation::Unrelated);
+        assert_eq!(task.stderr_redirection, Redirection::Stderr);
+        assert_eq!(task.stdout_redirection, Redirection::Stdout);
+        assert_eq!(task.command[0], String::from("echo"));
+        assert_eq!(task.command[1], String::from("foobar"));
+    }
+
+    #[test]
+    fn test_task_start_run() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foobar")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("foobar\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_task_start_failed() {
+        let command: Vec<String> = vec![String::from("thiscommandfails")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Start process
+        assert_eq!(
+            task.start().err().unwrap().code,
+            TaskErrorCode::CouldNotStartTask
+        );
+    }
+
+    #[test]
+    fn test_task_write() {
+        let command: Vec<String> = vec![String::from("cat")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Start process
+        assert!(task.start().is_ok());
+        //Write to process
+        assert!(task.write(String::from("hi there!\n")).is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read process output
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("hi there!\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should be still running
+        assert!(task.is_running());
+        //Kill process
+        assert!(task.kill().is_ok());
+        //Verify process terminated
+        assert!(!task.is_running());
+        //Exit code should be 9
+        assert_eq!(task.get_exitcode().unwrap(), 9);
+    }
+
+    #[test]
+    fn test_task_kill() {
+        let command: Vec<String> = vec![String::from("yes")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Process should be still running
+        assert!(task.is_running());
+        //Kill process
+        assert!(task.raise(UnixSignal::Sigint).is_ok());
+        //Verify process terminated
+        assert!(!task.is_running());
+        //Exit code should be 9
+        assert_eq!(task.get_exitcode().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_task_pipeline_simple() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        assert_eq!(task.relation, TaskRelation::And);
+        //Verify next is something
+        assert!(task.next.is_some());
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("foo\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        //Start next process
+        let mut task: Task = *task.next.unwrap();
+        //Verify next of second process is None
+        assert_eq!(task.relation, TaskRelation::Unrelated);
+        //Start second process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("bar\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_task_pipeline_with_pipe_mode() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Pipe,
+        );
+        assert_eq!(task.relation, TaskRelation::Pipe);
+        //Verify next is something
+        assert!(task.next.is_some());
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("foo\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        //Start next process
+        let mut task: Task = *task.next.unwrap();
+        //Verify next of second process is None
+        assert_eq!(task.relation, TaskRelation::Unrelated);
+        //Process should have already terminated
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("bar\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_task_redirect_stdout_to_file() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foobar")];
+        let mut tmpfile = create_tmpfile();
+        let tmpfile_path: String = String::from(tmpfile.path().to_str().unwrap());
+        let mut task: Task = Task::new(
+            command,
+            Redirection::File(tmpfile_path, FileRedirectionType::Append),
+            Redirection::Stderr,
+        );
+        //Start second process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Stdout and stderr should be both none (Since output has been redirected to file)
+        assert!(stdout.is_none());
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        //Read file
+        let output: String = read_file(&mut tmpfile);
+        assert_eq!(output, String::from("foobar\n"));
+    }
+
+    #[test]
+    fn test_task_stderr() {
+        let command: Vec<String> = vec![
+            String::from("ping"),
+            String::from("8.8.8.8.8.8.8.8.8.8.8.8.8.8.8"),
+        ];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Start second process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Stdout and stderr should be both none (Since output has been redirected to file)
+        assert!(stdout.is_none());
+        assert!(stderr.is_some());
+        assert!(stderr.unwrap().len() > 4); //Should at least be ping:
+        sleep(Duration::from_millis(100));
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert!(task.get_exitcode().unwrap() != 0); //Exitcode won't be 0
+    }
+
+    #[test]
+    fn test_task_redirect_stderr_to_file() {
+        let command: Vec<String> = vec![
+            String::from("ping"),
+            String::from("8.8.8.8.8.8.8.8.8.8.8.8.8.8.8"),
+        ];
+        let mut tmpfile = create_tmpfile();
+        let tmpfile_path: String = String::from(tmpfile.path().to_str().unwrap());
+        let mut task: Task = Task::new(
+            command,
+            Redirection::Stdout,
+            Redirection::File(tmpfile_path, FileRedirectionType::Append),
+        );
+        //Start second process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Stdout and stderr should be both none (Since output has been redirected to file)
+        assert!(stdout.is_none());
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        sleep(Duration::from_millis(100));
+        assert!(!task.is_running());
+        //Get exitcode
+        assert!(task.get_exitcode().unwrap() != 0); //Exitcode won't be 0
+                                                    //Read file
+        let output: String = read_file(&mut tmpfile);
+        println!("Stderr output: {}", output);
+        assert!(output.len() > 4); //Should at least be ping:
+    }
+
+    #[test]
+    fn test_task_kill_not_running() {
+        let command: Vec<String> = vec![String::from("yes")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //OOps, I forgot to start process
+        //Process should be still running
+        assert!(!task.is_running());
+        //Kill process
+        assert_eq!(
+            task.raise(UnixSignal::Sigint).err().unwrap().code,
+            TaskErrorCode::ProcessTerminated
+        );
+        assert_eq!(
+            task.kill().err().unwrap().code,
+            TaskErrorCode::ProcessTerminated
+        );
+        //Exit code should be 9
+        assert!(task.get_exitcode().is_none());
+    }
+
+    fn create_tmpfile() -> tempfile::NamedTempFile {
+        tempfile::NamedTempFile::new().unwrap()
+    }
+
+    fn read_file(tmpfile: &mut tempfile::NamedTempFile) -> String {
+        let file: &mut File = tmpfile.as_file_mut();
+        let mut out: String = String::new();
+        assert!(file.read_to_string(&mut out).is_ok());
+        out
     }
 }

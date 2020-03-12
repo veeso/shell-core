@@ -29,22 +29,13 @@ extern crate dirs;
 extern crate whoami;
 
 use crate::{ShellCore, ShellState, ParseStatement};
-use crate::process;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use dirs::home_dir;
+use std::env::set_current_dir;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 //Data types
-
-/// ## Redirect
-/// 
-/// Redirect enum describes the redirect type of a command
-#[derive(Clone, PartialEq, std::fmt::Debug)]
-enum Redirect {
-    Stdout,
-    File(String)
-}
 
 impl ShellCore {
 
@@ -58,6 +49,8 @@ impl ShellCore {
             Some(path) => PathBuf::from(path),
             None => PathBuf::from("/"),
         };
+        //set Working directory here
+        set_current_dir(wrkdir.as_path());
         ShellCore {
             state: ShellState::Idle,
             exit_code: 0,
@@ -66,11 +59,11 @@ impl ShellCore {
             wrk_dir: wrkdir,
             user: username,
             hostname: hostname,
-            home_dir: home,
+            home_dir: home.clone(),
             prev_dir: home,
             execution_started: Instant::now(),
             storage: HashMap::new(),
-            history: Vec::with_capacity(history_size),
+            history: VecDeque::with_capacity(history_size),
             parser: parser,
             buf_in: String::new()
         }

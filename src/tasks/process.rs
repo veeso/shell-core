@@ -318,7 +318,6 @@ impl Process {
     /// ### kill
     ///
     /// Kill using SIGKILL the sub process
-    #[allow(dead_code)]
     pub fn kill(&mut self) -> Result<(), ()> {
         match self.process.kill() {
             Ok(_) => {

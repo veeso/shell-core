@@ -17,6 +17,9 @@ subprocess = "0.2.4"
 whoami = "0.8.1"
 dirs = "2.0.2"
 
+[dev-dependencies]
+tempfile = "3"
+
 [lib]
 name = "shellcore"
 path = "src/lib.rs"
