@@ -74,6 +74,9 @@ impl Task {
     /// NOTE: if the relation is Pipe, the next command is directly executed
     /// In pipes the processes are started in sequence from the last to the first one
     pub fn start(&mut self) -> Result<(), TaskError> {
+        if self.process.is_some() {
+            return Err(TaskError::new(TaskErrorCode::AlreadyRunning, String::from("Could not start process since it is already running")))
+        }
         if self.relation == TaskRelation::Pipe {
             //Start next process
             if self.next.is_some() {
@@ -346,6 +349,26 @@ mod tests {
             task.start().err().unwrap().code,
             TaskErrorCode::CouldNotStartTask
         );
+    }
+
+    #[test]
+    fn test_task_run_twice() {
+        let command: Vec<String> = vec![String::from("cat")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Try to Start process another time
+        assert_eq!(task.start().err().unwrap().code, TaskErrorCode::AlreadyRunning);
+        //Process should be still running
+        assert!(task.is_running());
+        //Kill process
+        assert!(task.kill().is_ok());
+        //Verify process terminated
+        assert!(!task.is_running());
+        //Exit code should be 9
+        assert_eq!(task.get_exitcode().unwrap(), 9);
     }
 
     #[test]

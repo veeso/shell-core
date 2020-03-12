@@ -27,11 +27,15 @@
 // SOFTWARE.
 //
 
+pub(crate) mod manager;
 mod process;
-mod task;
+pub(crate) mod task;
 
 use crate::Redirection;
 use process::Process;
+
+use std::sync::{Arc, mpsc, Mutex};
+use std::thread;
 
 /// ## Task
 ///
@@ -50,7 +54,11 @@ struct Task {
 ///
 /// TaskManager is the struct which handles the Task pipeline execution
 pub(crate) struct TaskManager {
-    next: Task,
+    running: Arc<Mutex<bool>>, //Running state
+    m_loop: Option<thread::JoinHandle<Result<u8, TaskError>>>, //Returns exitcode or TaskError in join handle
+    pub receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
+    pub sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages
+    next: Option<Task> //NOTE: Option because has to be taken by thread
 }
 
 /// ## TaskErrorCode
@@ -66,7 +74,8 @@ pub enum TaskErrorCode {
     IoError,
     BrokenPipe,
     ProcessTerminated,
-    KillError
+    KillError,
+    AlreadyRunning
 }
 
 /// ## TaskError
@@ -92,6 +101,22 @@ pub(crate) enum TaskRelation {
     Or,
     Pipe,
     Unrelated,
+}
+
+/// ## TaskMessageTx
+/// 
+/// Messages to be sent from shell to Task
+enum TaskMessageTx {
+    Input(String), //Send Input
+    Kill, //Kill process
+    Signal(crate::UnixSignal) //Send signal
+}
+
+/// ## TaskMessageRx
+/// 
+/// Messages to be sent from Task back to shell
+enum TaskMessageRx {
+    Output((String, String)) //Task Output (Stdout, Stderr)
 }
 
 //@! TaskError
