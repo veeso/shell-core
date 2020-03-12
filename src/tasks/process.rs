@@ -28,6 +28,8 @@
 extern crate nix;
 extern crate subprocess;
 
+use crate::UnixSignal;
+
 //Fmt
 use std::fmt;
 //I/O
@@ -78,7 +80,7 @@ impl Process {
     ///
     /// Start a new process and returns a Process struct
     /// If process failed to start, returns a PopenError
-    pub fn exec(argv: Vec<String>) -> Result<Process, ProcessError> {
+    pub fn exec(argv: &Vec<String>) -> Result<Process, ProcessError> {
         if argv.len() == 0 {
             return Err(ProcessError::NoArgs);
         }
@@ -272,7 +274,8 @@ impl Process {
     /// ### raise
     ///
     /// Send a signal to the running process
-    pub fn raise(&mut self, signal: signal::Signal) -> Result<(), ()> {
+    pub fn raise(&mut self, signal: UnixSignal) -> Result<(), ()> {
+        let signal: signal::Signal = signal.to_nix_signal();
         match self.process.pid() {
             Some(pid) => {
                 let unix_pid: Pid = Pid::from_raw(pid as i32);
@@ -344,6 +347,48 @@ impl Process {
     }
 }
 
+impl UnixSignal {
+
+    /// ### to_nix_signal
+    /// 
+    /// Converts a UnixSignal to a nix::signal
+    pub(self) fn to_nix_signal(&self) -> signal::Signal {
+        match self {
+            UnixSignal::Sigabrt => signal::Signal::SIGABRT,
+            UnixSignal::Sigalrm => signal::Signal::SIGALRM,
+            UnixSignal::Sigbus => signal::Signal::SIGBUS,
+            UnixSignal::Sigchld => signal::Signal::SIGCHLD,
+            UnixSignal::Sigcont => signal::Signal::SIGCONT,
+            UnixSignal::Sigfpe => signal::Signal::SIGFPE,
+            UnixSignal::Sighup => signal::Signal::SIGHUP,
+            UnixSignal::Sigill => signal::Signal::SIGILL,
+            UnixSignal::Sigint => signal::Signal::SIGINT,
+            UnixSignal::Sigio => signal::Signal::SIGIO,
+            UnixSignal::Sigkill => signal::Signal::SIGKILL,
+            UnixSignal::Sigpipe => signal::Signal::SIGPIPE,
+            UnixSignal::Sigprof => signal::Signal::SIGPROF,
+            UnixSignal::Sigpwr => signal::Signal::SIGPWR,
+            UnixSignal::Sigquit => signal::Signal::SIGQUIT,
+            UnixSignal::Sigsegv => signal::Signal::SIGSEGV,
+            UnixSignal::Sigstkflt => signal::Signal::SIGSTKFLT,
+            UnixSignal::Sigstop => signal::Signal::SIGSTOP,
+            UnixSignal::Sigsys => signal::Signal::SIGSYS,
+            UnixSignal::Sigterm => signal::Signal::SIGTERM,
+            UnixSignal::Sigtrap => signal::Signal::SIGTRAP,
+            UnixSignal::Sigtstp => signal::Signal::SIGTSTP,
+            UnixSignal::Sigttin => signal::Signal::SIGTTIN,
+            UnixSignal::Sigttou => signal::Signal::SIGTTOU,
+            UnixSignal::Sigurg => signal::Signal::SIGURG,
+            UnixSignal::Sigusr1 => signal::Signal::SIGUSR1,
+            UnixSignal::Sigusr2 => signal::Signal::SIGUSR2,
+            UnixSignal::Sigvtalrm => signal::Signal::SIGVTALRM,
+            UnixSignal::Sigwinch => signal::Signal::SIGWINCH,
+            UnixSignal::Sigxcpu => signal::Signal::SIGXCPU,
+            UnixSignal::Sigxfsz => signal::Signal::SIGXFSZ
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -358,7 +403,7 @@ mod tests {
             String::from("foo"),
             String::from("bar"),
         ];
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'echo foo bar': {}", error),
         };
@@ -400,7 +445,7 @@ mod tests {
     fn test_subprocess_io() {
         //the best and simplest example with this is CAT command :D
         let argv: Vec<String> = vec![String::from("cat")]; //No extra arg
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'cat': {}", error),
         };
@@ -453,7 +498,7 @@ mod tests {
             }
         }
         //Finally Send SIGINT
-        if let Err(err) = process.raise(signal::Signal::SIGINT) {
+        if let Err(err) = process.raise(UnixSignal::Sigint) {
             panic!("Could not send SIGINT to cat process: {:?}", err);
         }
         //Process should be terminated
@@ -465,7 +510,7 @@ mod tests {
     #[test]
     fn test_kill() {
         let argv: Vec<String> = vec![String::from("yes")];
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'yes': {}", error),
         };
@@ -485,21 +530,21 @@ mod tests {
     #[should_panic]
     fn test_process_no_argv() {
         let argv: Vec<String> = vec![];
-        Process::exec(argv).ok().unwrap();
+        Process::exec(&argv).ok().unwrap();
     }
 
     #[test]
     #[should_panic]
     fn test_process_unknown_command() {
         let argv: Vec<String> = vec![String::from("piroporopero")];
-        Process::exec(argv).ok().unwrap();
+        Process::exec(&argv).ok().unwrap();
     }
 
     #[test]
     #[should_panic]
     fn test_process_terminated_write() {
         let argv: Vec<String> = vec![String::from("echo"), String::from("0")];
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'echo foo bar': {}", error),
         };
@@ -521,7 +566,7 @@ mod tests {
     #[should_panic]
     fn test_process_terminated_read() {
         let argv: Vec<String> = vec![String::from("echo"), String::from("0")];
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'echo foo bar': {}", error),
         };
@@ -543,7 +588,7 @@ mod tests {
     #[should_panic]
     fn test_process_stderr_broken_pipe() {
         let argv: Vec<String> = vec![String::from("echo"), String::from("0")];
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'echo foo bar': {}", error),
         };
@@ -554,7 +599,7 @@ mod tests {
     #[test]
     fn test_process_signaled() {
         let argv: Vec<String> = vec![String::from("cat")];
-        let mut process: Process = match Process::exec(argv) {
+        let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
             Err(error) => panic!("Could not start process 'echo foo bar': {}", error),
         };
@@ -570,5 +615,40 @@ mod tests {
     #[test]
     fn test_display_error() {
         println!("{}; {}", ProcessError::CouldNotStartProcess, ProcessError::NoArgs);
+    }
+
+    #[test]
+    fn test_unix_signals() {
+        assert_eq!(UnixSignal::Sigabrt.to_nix_signal(), signal::SIGABRT);
+        assert_eq!(UnixSignal::Sighup.to_nix_signal(), signal::SIGHUP);
+        assert_eq!(UnixSignal::Sigint.to_nix_signal(), signal::SIGINT);
+        assert_eq!(UnixSignal::Sigquit.to_nix_signal(), signal::SIGQUIT);
+        assert_eq!(UnixSignal::Sigill.to_nix_signal(), signal::SIGILL);
+        assert_eq!(UnixSignal::Sigtrap.to_nix_signal(), signal::SIGTRAP);
+        assert_eq!(UnixSignal::Sigbus.to_nix_signal(), signal::SIGBUS);
+        assert_eq!(UnixSignal::Sigfpe.to_nix_signal(), signal::SIGFPE);
+        assert_eq!(UnixSignal::Sigkill.to_nix_signal(), signal::SIGKILL);
+        assert_eq!(UnixSignal::Sigusr1.to_nix_signal(), signal::SIGUSR1);
+        assert_eq!(UnixSignal::Sigsegv.to_nix_signal(), signal::SIGSEGV);
+        assert_eq!(UnixSignal::Sigusr2.to_nix_signal(), signal::SIGUSR2);
+        assert_eq!(UnixSignal::Sigpipe.to_nix_signal(), signal::SIGPIPE);
+        assert_eq!(UnixSignal::Sigalrm.to_nix_signal(), signal::SIGALRM);
+        assert_eq!(UnixSignal::Sigterm.to_nix_signal(), signal::SIGTERM);
+        assert_eq!(UnixSignal::Sigstkflt.to_nix_signal(), signal::SIGSTKFLT);
+        assert_eq!(UnixSignal::Sigchld.to_nix_signal(), signal::SIGCHLD);
+        assert_eq!(UnixSignal::Sigcont.to_nix_signal(), signal::SIGCONT);
+        assert_eq!(UnixSignal::Sigstop.to_nix_signal(), signal::SIGSTOP);
+        assert_eq!(UnixSignal::Sigtstp.to_nix_signal(), signal::SIGTSTP);
+        assert_eq!(UnixSignal::Sigttin.to_nix_signal(), signal::SIGTTIN);
+        assert_eq!(UnixSignal::Sigttou.to_nix_signal(), signal::SIGTTOU);
+        assert_eq!(UnixSignal::Sigurg.to_nix_signal(), signal::SIGURG);
+        assert_eq!(UnixSignal::Sigxcpu.to_nix_signal(), signal::SIGXCPU);
+        assert_eq!(UnixSignal::Sigxfsz.to_nix_signal(), signal::SIGXFSZ);
+        assert_eq!(UnixSignal::Sigvtalrm.to_nix_signal(), signal::SIGVTALRM);
+        assert_eq!(UnixSignal::Sigprof.to_nix_signal(), signal::SIGPROF);
+        assert_eq!(UnixSignal::Sigwinch.to_nix_signal(), signal::SIGWINCH);
+        assert_eq!(UnixSignal::Sigio.to_nix_signal(), signal::SIGIO);
+        assert_eq!(UnixSignal::Sigpwr.to_nix_signal(), signal::SIGPWR);
+        assert_eq!(UnixSignal::Sigsys.to_nix_signal(), signal::SIGSYS);
     }
 }
