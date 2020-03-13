@@ -346,6 +346,14 @@ impl Process {
     }
 }
 
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.process.terminate();
+        self.stderr_fd = None;
+        self.stdout_fd = None;
+    }
+}
+
 impl UnixSignal {
 
     /// ### to_nix_signal
