@@ -152,6 +152,9 @@ impl TaskManager {
         if let Err(err) = task.start() {
             //Report error
             if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                //Set running to false
+                let mut running = running.lock().unwrap();
+                *running = false;
                 return 255 //The other end hung up, so  terminate the thread
             }
         }
@@ -163,6 +166,9 @@ impl TaskManager {
                     //Send stdout and stderr (only if at least one of them is Some)
                     if stdout.is_some() || stderr.is_some() {
                         if rx_sender.send(TaskMessageRx::Output((stdout, stderr))).is_err() {
+                            //Set running to false
+                            let mut running = running.lock().unwrap();
+                            *running = false;
                             return 255 //The other end hung up, so  terminate the thread
                         }
                     }
@@ -172,6 +178,9 @@ impl TaskManager {
                         TaskErrorCode::ProcessTerminated => {}, //If process terminated, ignore the error
                         _ => { //Otherwise report it
                             if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                //Set running to false
+                                let mut running = running.lock().unwrap();
+                                *running = false;
                                 return 255 //The other end hung up, so  terminate the thread
                             }
                         }
@@ -190,6 +199,9 @@ impl TaskManager {
                                     if let Err(err) = task.write(input) {
                                         //Report error in writing to process' stdin
                                         if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                            //Set running to false
+                                            let mut running = running.lock().unwrap();
+                                            *running = false;
                                             return 255 //The other end hung up, so  terminate the thread
                                         }
                                     }
@@ -199,6 +211,9 @@ impl TaskManager {
                                     if let Err(err) = task.kill() {
                                         //Report error in killing process
                                         if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                            //Set running to false
+                                            let mut running = running.lock().unwrap();
+                                            *running = false;
                                             return 255 //The other end hung up, so  terminate the thread
                                         }
                                     }
@@ -208,6 +223,9 @@ impl TaskManager {
                                     if let Err(err) = task.raise(signal) {
                                         //Report error in signaling process
                                         if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                            //Set running to false
+                                            let mut running = running.lock().unwrap();
+                                            *running = false;
                                             return 255 //The other end hung up, so  terminate the thread
                                         }
                                     }
@@ -220,6 +238,9 @@ impl TaskManager {
                                 _ => {
                                     //Kill process and return, the endpoint hung up
                                     let _ = task.kill();
+                                    //Set running to false
+                                    let mut running = running.lock().unwrap();
+                                    *running = false;
                                     return 255
                                 }
                             }
@@ -246,6 +267,9 @@ impl TaskManager {
                                     if let Err(err) = task.start() {
                                         //Report error in starting process
                                         if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                            //Set running to false
+                                            let mut running = running.lock().unwrap();
+                                            *running = false;
                                             return 255 //The other end hung up, so  terminate the thread
                                         }
                                     }
@@ -258,6 +282,9 @@ impl TaskManager {
                                     if let Err(err) = task.start() {
                                         //Report error in starting process
                                         if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                            //Set running to false
+                                            let mut running = running.lock().unwrap();
+                                            *running = false;
                                             return 255 //The other end hung up, so  terminate the thread
                                         }
                                     }
@@ -278,6 +305,9 @@ impl TaskManager {
                                 if let Err(err) = task.start() {
                                     //Report error in starting process
                                     if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                        //Set running to false
+                                        let mut running = running.lock().unwrap();
+                                        *running = false;
                                         return 255 //The other end hung up, so  terminate the thread
                                     }
                                 }
@@ -1252,6 +1282,26 @@ mod tests {
         assert!(!manager.is_running());
         let rc: u8 = manager.join().unwrap();
         assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_thread_terminated_cause_of_dropped_receiver() {
+        let command: Vec<String> = vec![String::from("cat")];
+        let sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Sleep for 100ms
+        sleep(Duration::from_millis(100));
+        //Set receiver to None, this will make the thread to fail
+        manager.receiver = None;
+        manager.sender = None;
+        sleep(Duration::from_millis(200));
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 255);
     }
 
 }
