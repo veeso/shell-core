@@ -81,7 +81,7 @@ impl Task {
         if self.relation == TaskRelation::Pipe {
             //Start next process
             if self.next.is_some() {
-                if let Err(err) = self.next.as_mut().unwrap().start() {
+                if let Err(_) = self.next.as_mut().unwrap().start() {
                     return Err(TaskError::new(TaskErrorCode::BrokenPipe, String::from("Failed to start next process in the pipeline")));
                 }
             }
@@ -551,7 +551,7 @@ mod tests {
         assert_eq!(task.get_exitcode().unwrap(), 0);
         let mut task: Task = *task.next.unwrap();
         //Verify next task output is foobar
-        let (stdout, stderr) = task.read().unwrap();
+        let (stdout, _stderr) = task.read().unwrap();
         assert_eq!(stdout.unwrap(), String::from("foobar\n"));
         //Wait 500ms
         sleep(Duration::from_millis(500));
