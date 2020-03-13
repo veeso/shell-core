@@ -396,7 +396,7 @@ mod tests {
     use std::thread::sleep;
 
     #[test]
-    fn test_subprocess_output_only() {
+    fn test_process_output_only() {
         let argv: Vec<String> = vec![
             String::from("echo"),
             String::from("foo"),
@@ -441,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_subprocess_io() {
+    fn test_process_subprocess_io() {
         //the best and simplest example with this is CAT command :D
         let argv: Vec<String> = vec![String::from("cat")]; //No extra arg
         let mut process: Process = match Process::exec(&argv) {
@@ -507,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn test_kill() {
+    fn test_process_kill() {
         let argv: Vec<String> = vec![String::from("yes")];
         let mut process: Process = match Process::exec(&argv) {
             Ok(p) => p,
@@ -612,12 +612,12 @@ mod tests {
     }
 
     #[test]
-    fn test_display_error() {
+    fn test_process_display_error() {
         println!("{}; {}", ProcessError::CouldNotStartProcess, ProcessError::NoArgs);
     }
 
     #[test]
-    fn test_unix_signals() {
+    fn test_process_unix_signals() {
         assert_eq!(UnixSignal::Sigabrt.to_nix_signal(), signal::SIGABRT);
         assert_eq!(UnixSignal::Sighup.to_nix_signal(), signal::SIGHUP);
         assert_eq!(UnixSignal::Sigint.to_nix_signal(), signal::SIGINT);
