@@ -50,7 +50,7 @@ impl Task {
 
     /// ## new_pipeline
     ///
-    /// Add to Task a new task to create a pipeline
+    /// Add to Task a new task
     pub fn new_pipeline(
         &mut self,
         next_command: Vec<String>,
@@ -58,10 +58,15 @@ impl Task {
         stderr_redir: Redirection,
         relation: TaskRelation,
     ) {
-        //Set current relation to relation
-        self.relation = relation;
-        //Set new Task as Next Task
-        self.next = Some(Box::new(Task::new(next_command, stdout_redir, stderr_redir)));
+        //If next is None, set Next as new Task, otherwise pass new task to the next of the next etc...
+        match &mut self.next {
+            None => self.next = {
+                //Set current relation to relation
+                self.relation = relation;
+                Some(Box::new(Task::new(next_command, stdout_redir, stderr_redir)))
+            },
+            Some(task) => task.new_pipeline(next_command, stdout_redir, stderr_redir, relation)
+        }
     }
 
     /// ## start
@@ -435,6 +440,80 @@ mod tests {
         let (stdout, stderr) = task.read().unwrap();
         //Verify stdout
         assert_eq!(stdout.unwrap(), String::from("bar\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_task_pipeline_with_3_tasks() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("pippo")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        assert_eq!(task.relation, TaskRelation::And);
+        //Verify next is something
+        assert!(task.next.is_some());
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("foo\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        //@! Start SECOND process
+        let mut task: Task = *task.next.unwrap();
+        //Verify next of second process is None
+        assert_eq!(task.relation, TaskRelation::And);
+        //Start second process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("bar\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        //@! Start THIRD process
+        let mut task: Task = *task.next.unwrap();
+        //Verify next of second process is None
+        assert_eq!(task.relation, TaskRelation::Unrelated);
+        //Start second process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("pippo\n"));
         //Verify stderr
         assert!(stderr.is_none());
         //Process should not be running anymore
