@@ -55,6 +55,7 @@ pub(crate) struct Task {
 /// TaskManager is the struct which handles the Task pipeline execution
 pub(crate) struct TaskManager {
     running: Arc<Mutex<bool>>, //Running state
+    joined: Arc<Mutex<bool>>, //Tells thread it can terminate
     m_loop: Option<thread::JoinHandle<u8>>, //Returns exitcode or TaskError in join handle
     receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
     sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages

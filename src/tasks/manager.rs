@@ -40,6 +40,7 @@ impl TaskManager {
     pub(crate) fn new(first_task: Task) -> TaskManager {
         TaskManager {
             running: Arc::new(Mutex::new(false)),
+            joined: Arc::new(Mutex::new(false)),
             m_loop: None,
             receiver: None,
             sender: None,
@@ -65,12 +66,15 @@ impl TaskManager {
         let (tx_sender, tx_receiver) = mpsc::channel();
         self.receiver = Some(rx_receiver);
         self.sender = Some(tx_sender);
-        let running_rc = Arc::clone(&self.running);
+        let mut running_rc = Arc::clone(&self.running);
+        let mut joined_rc = Arc::clone(&self.joined);
         //Get process out from TaskManager
         let mut task = self.next.take().unwrap();
+        //Set running to true
+        *running = true;
         //Start thread
         self.m_loop = Some(thread::spawn(move || {
-            TaskManager::run(task, tx_receiver, rx_sender)
+            TaskManager::run(task, tx_receiver, rx_sender, running_rc, joined_rc)
         }));
         Ok(())
     }
@@ -125,6 +129,11 @@ impl TaskManager {
     /// NOTE: this function is blocking, use is_running to join asynchronously
     pub fn join(&mut self) -> Result<u8, TaskError> {
         if self.m_loop.is_some() {
+            //Set join to true
+            {
+                let mut joined = self.joined.lock().unwrap();
+                *joined = true;
+            }
             let rc: u8 = self.m_loop.take().map(thread::JoinHandle::join).unwrap().unwrap();
             //Set to none all the structures
             self.receiver = None;
@@ -138,7 +147,7 @@ impl TaskManager {
     /// ### run
     /// 
     /// Run method for thread
-    fn run(mut task: Task, tx_receiver: mpsc::Receiver<TaskMessageTx>, rx_sender: mpsc::Sender<TaskMessageRx>) -> u8 {
+    fn run(mut task: Task, tx_receiver: mpsc::Receiver<TaskMessageTx>, rx_sender: mpsc::Sender<TaskMessageRx>, running: Arc<Mutex<bool>>, joined: Arc<Mutex<bool>>) -> u8 {
         //Start process
         if let Err(err) = task.start() {
             //Report error
@@ -148,7 +157,28 @@ impl TaskManager {
         }
         let mut last_exit_code: u8 = 255;
         loop {
-            //If process is running handle I/O
+            //Always try to read before handling process running state
+            match task.read() {
+                Ok((stdout, stderr)) => {
+                    //Send stdout and stderr (only if at least one of them is Some)
+                    if stdout.is_some() || stderr.is_some() {
+                        if rx_sender.send(TaskMessageRx::Output((stdout, stderr))).is_err() {
+                            return 255 //The other end hung up, so  terminate the thread
+                        }
+                    }
+                },
+                Err(err) => {
+                    match err.code {
+                        TaskErrorCode::ProcessTerminated => {}, //If process terminated, ignore the error
+                        _ => { //Otherwise report it
+                            if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
+                                return 255 //The other end hung up, so  terminate the thread
+                            }
+                        }
+                    }
+                }
+            }
+            //If process is running handle Inputs
             if task.is_running() {
                 //Handle TX receiver
                 loop { //Iterate until all messages have been processes
@@ -196,21 +226,6 @@ impl TaskManager {
                         }
                     }
                 }
-                //Read from process
-                match task.read() {
-                    Ok((stdout, stderr)) => {
-                        //Send stdout and stderr
-                        if rx_sender.send(TaskMessageRx::Output((stdout, stderr))).is_err() {
-                            return 255 //The other end hung up, so  terminate the thread
-                        }
-                    },
-                    Err(err) => { //Report error
-                        //Report error
-                        if rx_sender.send(TaskMessageRx::Error(err)).is_err() {
-                            return 255 //The other end hung up, so  terminate the thread
-                        }
-                    }
-                }
                 //If process is running, sleep for 100ms
                 thread::sleep(Duration::from_millis(100));
             } else { //@! Otherwise handle next process in pipeline
@@ -218,6 +233,7 @@ impl TaskManager {
                 //The next process is always pushed as new process. It may not be started though
                 //In case the process is not INTENTIONALLY started (for example because the expression failed)
                 // The next process will be executed if exists on the next cycle
+                //Set last exitcode to task exitcode if it has Some
                 last_exit_code = task.get_exitcode().unwrap_or(last_exit_code);
                 match task.next {
                     Some(t) => {
@@ -225,7 +241,7 @@ impl TaskManager {
                         match task.relation {
                             TaskRelation::And => { //Start new process ONLY if this process' exitcode was SUCCESSFUL
                                 task = *t;
-                                if task.exit_code.unwrap_or(255) == 0 {
+                                if last_exit_code == 0 {
                                     //Start next process
                                     if let Err(err) = task.start() {
                                         //Report error in starting process
@@ -237,7 +253,7 @@ impl TaskManager {
                             },
                             TaskRelation::Or => { //Start new process ONLY if this process' exitcode was UNSUCCESSFUL
                                 task = *t;
-                                if task.exit_code.unwrap_or(255) != 0 { //@! OR relation was UNSUCCESSFUL
+                                if last_exit_code != 0 { //@! OR relation was UNSUCCESSFUL
                                     //Start next process
                                     if let Err(err) = task.start() {
                                         //Report error in starting process
@@ -272,6 +288,21 @@ impl TaskManager {
                 }
             }
         }
+        //Set running to false
+        {
+            let mut running = running.lock().unwrap();
+            *running = false;
+        }
+        //Wait for join to be called
+        loop {
+            {
+                let joined = joined.lock().unwrap();
+                if *joined {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
         //Return exitcode
         task.exit_code.unwrap_or(last_exit_code)
     }
@@ -285,6 +316,7 @@ mod tests {
 
     use super::*;
     use crate::Redirection;
+    use crate::UnixSignal;
 
     use std::thread::sleep;
     use std::time::{Duration, Instant};
@@ -332,7 +364,6 @@ mod tests {
                         assert_eq!(*stdout.as_ref().unwrap(), String::from("foobar\n"));
                         println!("test_manager_one_task : Received message from task: '{}'", stdout.as_ref().unwrap());
                         message_recv = true;
-                        break;
                     },
                     TaskMessageRx::Error(err) => panic!("test_manager_one_task : Unexpected error: {:?}", err)
                 }
@@ -340,6 +371,885 @@ mod tests {
             sleep(Duration::from_millis(100));
         }
         //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_UNRELATED() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_UNRELATED : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("Received a 3rd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_pipeline_UNRELATED : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_pipeline_UNRELATED : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_AND_successful() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_AND_successful : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("Received a 3rd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_pipeline_AND_successful : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_pipeline_AND_successful : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_AND_unsuccessful() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_AND_unsuccessful : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("Received a 3rd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_pipeline_AND_unsuccessful : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_pipeline_AND_unsuccessful : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_OR_successful() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 1 seconds
+        //We expect 1 Output messages. Since the first process is successful, the second process should not be executed
+        let mut output_messages: u8 = 0;
+        loop {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_unrelated : TaskManager timeout");
+            }
+            if !manager.is_running() {
+                break;
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => panic!("test_manager_pipeline_OR_successful : expected one output, but got 2"),
+                            _ => panic!("Received a 3rd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_pipeline_unrelated : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_pipeline_unrelated : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        assert!(!manager.is_running());
+        //Verify exit code
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_OR_unsuccessful() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("ping"), String::from("8.8.8.8.8.8.8.8.8.8")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages (One from stderr, one from stdout)
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_OR_unsuccessful : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert!(stderr.as_ref().is_some()), //The first is from stderr, the second from stdout
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("Received a 3rd message from task... That was unexpected...")
+                        }
+                        if output_messages == 1 {
+                            println!("test_manager_pipeline_OR_unsuccessful : Received message from task (stderr): '{}'", stderr.as_ref().unwrap());
+                        } else {
+                            println!("test_manager_pipeline_OR_unsuccessful : Received message from task (stdout): '{}'", stdout.as_ref().unwrap());
+                        }
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_pipeline_OR_unsuccessful : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_PIPE_successful() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("head"), String::from("-n"), String::from("1")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("head"), String::from("-n"), String::from("1")];
+        //Build pipeline
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Pipe,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //We expect 1 Output messages
+        let mut output_messages: u8 = 0;
+        //Write to process
+        assert!(manager.send_message(TaskMessageTx::Input(String::from("Hello world!\n"))).is_ok());
+        //Wait for process; we'll receive the output from tail process
+        while output_messages < 1 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_PIPE_successful : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("Hello world!\n")),
+                            _ => panic!("test_manager_pipeline_PIPE_successful : Received a 2nd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_pipeline_PIPE_successful : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_pipeline_PIPE_successful : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_pipeline_PIPE_broken() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("head"), String::from("-n"), String::from("1")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("THISCOMMANDDOESNOTEXIST")];
+        //Build pipeline
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Pipe,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //We expect 1 Error message
+        let mut output_messages: u8 = 0;
+        //Wait for process; we'll receive the output from tail process
+        while output_messages < 1 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_pipeline_PIPE_broken : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                output_messages += 1;
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        panic!("test_manager_pipeline_PIPE_broken : Expected error, got Output")
+                    },
+                    TaskMessageRx::Error(err) => match output_messages {
+                        1 => assert_eq!(err.code, TaskErrorCode::BrokenPipe),
+                        _ => panic!("test_manager_pipeline_PIPE_broken : Expected only 1 error, not more")
+                    } 
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 255);
+    }
+
+    #[test]
+    fn test_manager_error() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("THISCOMMANDWONTSTART")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        let mut output_messages: u8 = 0;
+        //Wait for 2 output messages, the first should be an error
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_error : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                output_messages += 1;
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        match output_messages {
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("test_manager_error : That was unexpected... only 2nd message should be output")
+                        }
+                        println!("test_manager_error : Received message from task (stdout): '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => match output_messages {
+                        1 => assert_eq!(err.code, TaskErrorCode::CouldNotStartTask),
+                        _ => panic!("That was unexpected... only 1st message should be error")
+                    }
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_write_stdin() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("head"), String::from("-n"), String::from("1")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 50ms
+        sleep(Duration::from_millis(50));
+        //We expect 1 Output messages
+        let mut output_messages: u8 = 0;
+        //Write to process
+        assert!(manager.send_message(TaskMessageTx::Input(String::from("Hello world!\n"))).is_ok());
+        //Wait for process
+        while output_messages < 1 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_write_stdin : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("Hello world!\n")),
+                            _ => panic!("test_manager_write_stdin : Received a 2nd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_write_stdin : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_write_stdin : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_kill() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("cat")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 500ms
+        sleep(Duration::from_millis(500));
+        //Kill cat
+        assert!(manager.send_message(TaskMessageTx::Kill).is_ok());
+        //We expect 1 Output messages, since the first process was killed
+        let mut output_messages: u8 = 0;
+        while output_messages < 1 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_kill : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("test_manager_kill : Received a 2nd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_kill : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_kill : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_signal() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("cat")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 500ms
+        sleep(Duration::from_millis(500));
+        //Send SIGABRT to cat process
+        assert!(manager.send_message(TaskMessageTx::Signal(UnixSignal::Sigabrt)).is_ok());
+        //We expect 1 Output messages, since the first process was killed
+        let mut output_messages: u8 = 0;
+        while output_messages < 1 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_signal : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            _ => panic!("test_manager_signal : Received a 2nd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_signal : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_signal : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_T1_AND_T2_UR_T3() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("woff")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 3 Output messages
+        let mut output_messages: u8 = 0;
+        while output_messages < 3 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_T1_AND_T2_UR_T3 : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            3 => assert_eq!(*stdout.as_ref().unwrap(), String::from("woff\n")),
+                            _ => panic!("test_manager_T1_AND_T2_UR_T3 : Received a 4th message from task... That was unexpected...")
+                        }
+                        println!("test_manager_T1_AND_T2_UR_T3 : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_T1_AND_T2_UR_T3 : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_NOT_T1_AND_T2_UR_T3() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("ping"), String::from("8.8.8.8.8.8.8.8.8")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("woff")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages (1 stderr, 1 stdout)
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_NOT_T1_AND_T2_UR_T3 : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert!(stderr.as_ref().is_some()),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("woff\n")),
+                            _ => panic!("test_manager_NOT_T1_AND_T2_UR_T3 : Received a 3rd message from task... That was unexpected...")
+                        }
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_NOT_T1_AND_T2_UR_T3 : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_T1_OR_T2_UR_T3() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("woff")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages (from 1st and 3rd tasks)
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_T1_OR_T2_UR_T3 : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("woff\n")),
+                            _ => panic!("test_manager_T1_OR_T2_UR_T3 : Received a 3rd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_T1_OR_T2_UR_T3 : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_T1_OR_T2_UR_T3 : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_NOT_T1_OR_T2_UR_T3() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("ping"), String::from("8.8.8.8.8.8.8.8.8")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("woff")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 3 Output messages (1 stderr, 2 stdout)
+        let mut output_messages: u8 = 0;
+        while output_messages < 3 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_NOT_T1_OR_T2_UR_T3 : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert!(stderr.as_ref().is_some()),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            3 => assert_eq!(*stdout.as_ref().unwrap(), String::from("woff\n")),
+                            _ => panic!("test_manager_NOT_T1_OR_T2_UR_T3 : Received a 3rd message from task... That was unexpected...")
+                        }
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_NOT_T1_OR_T2_UR_T3 : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_T1_OR_T2_AND_T3() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("woff")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 2 Output messages (from 1st and 3rd tasks)
+        let mut output_messages: u8 = 0;
+        while output_messages < 2 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_T1_OR_T2_UR_T3 : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert_eq!(*stdout.as_ref().unwrap(), String::from("foo\n")),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("woff\n")),
+                            _ => panic!("test_manager_T1_OR_T2_UR_T3 : Received a 3rd message from task... That was unexpected...")
+                        }
+                        println!("test_manager_T1_OR_T2_UR_T3 : Received message from task: '{}'", stdout.as_ref().unwrap());
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_T1_OR_T2_UR_T3 : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_NOT_T1_OR_T2_AND_T3() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("ping"), String::from("8.8.8.8.8.8.8.8.8")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        let command: Vec<String> = vec![String::from("echo"), String::from("woff")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //We expect 3 Output messages (1 stderr, 2 stdout)
+        let mut output_messages: u8 = 0;
+        while output_messages < 3 {
+            if start_time.elapsed().as_secs() >= 3 {
+                panic!("test_manager_NOT_T1_OR_T2_AND_T3 : TaskManager timeout");
+            }
+            //Get message
+            let inbox: Vec<TaskMessageRx> = manager.fetch_messages().unwrap();
+            for message in inbox.iter() {
+                match message {
+                    TaskMessageRx::Output((stdout, stderr)) => {
+                        output_messages += 1;
+                        match output_messages {
+                            1 => assert!(stderr.as_ref().is_some()),
+                            2 => assert_eq!(*stdout.as_ref().unwrap(), String::from("bar\n")),
+                            3 => assert_eq!(*stdout.as_ref().unwrap(), String::from("woff\n")),
+                            _ => panic!("test_manager_NOT_T1_OR_T2_AND_T3 : Received a 3rd message from task... That was unexpected...")
+                        }
+                    },
+                    TaskMessageRx::Error(err) => panic!("test_manager_NOT_T1_OR_T2_AND_T3 : Unexpected error: {:?}", err)
+                }
+            }
+            sleep(Duration::from_millis(100));
+        }
+        //Verify exit code
+        assert!(!manager.is_running());
         let rc: u8 = manager.join().unwrap();
         assert_eq!(rc, 0);
     }
