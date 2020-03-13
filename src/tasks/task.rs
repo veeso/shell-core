@@ -61,11 +61,7 @@ impl Task {
         //Set current relation to relation
         self.relation = relation;
         //Set new Task as Next Task
-        self.next = Some(Box::new(Task::new(
-            next_command,
-            stdout_redir,
-            stderr_redir,
-        )));
+        self.next = Some(Box::new(Task::new(next_command, stdout_redir, stderr_redir)));
     }
 
     /// ## start
@@ -114,21 +110,11 @@ impl Task {
                         let mut res_stdout: String = String::new();
                         let mut res_stderr: String = String::new();
                         //Check redirections for stdout
-                        if let Err(err) = self.redirect_output(
-                            self.stdout_redirection.clone(),
-                            stdout,
-                            &mut res_stdout,
-                            &mut res_stderr,
-                        ) {
+                        if let Err(err) = self.redirect_output(self.stdout_redirection.clone(), stdout, &mut res_stdout, &mut res_stderr) {
                             return Err(err);
                         }
                         //Check redirections fdr stderr
-                        if let Err(err) = self.redirect_output(
-                            self.stderr_redirection.clone(),
-                            stderr,
-                            &mut res_stdout,
-                            &mut res_stderr,
-                        ) {
+                        if let Err(err) = self.redirect_output(self.stderr_redirection.clone(), stderr, &mut res_stdout, &mut res_stderr) {
                             return Err(err);
                         }
                         let res_stdout: Option<String> = match res_stdout.len() {
@@ -233,19 +219,22 @@ impl Task {
     /// ### redirect_output
     ///
     /// Handle output redirections in a single method
-    fn redirect_output(
-        &self,
-        redirection: Redirection,
-        output: Option<String>,
-        stdout: &mut String,
-        stderr: &mut String,
-    ) -> Result<(), TaskError> {
+    /// NOTE: This method redirects output to pipes too
+    fn redirect_output(&mut self, redirection: Redirection, output: Option<String>, stdout: &mut String, stderr: &mut String) -> Result<(), TaskError> {
         match redirection {
             Redirection::Stdout => {
                 if output.is_some() {
-                    stdout.push_str(&output.unwrap());
+                    //If relation is Pipe, write output to NEXT TASK, otherwise push to stdout string
+                    if self.relation == TaskRelation::Pipe {
+                        match self.next.as_mut().unwrap().write(output.unwrap()) {
+                            Ok(()) => return Ok(()),
+                            Err(err) => return Err(TaskError::new(TaskErrorCode::BrokenPipe, err.message))
+                        }
+                    } else {
+                        stdout.push_str(&output.unwrap());
+                    }
                 }
-            }
+            },
             Redirection::Stderr => {
                 if output.is_some() {
                     stderr.push_str(&output.unwrap());
@@ -263,18 +252,8 @@ impl Task {
     /// ### redirect_to_file
     ///
     /// Redirect a certain output to a certain file
-    fn redirect_to_file(
-        &self,
-        file: String,
-        file_mode: FileRedirectionType,
-        out: String,
-    ) -> Result<(), TaskError> {
-        match OpenOptions::new()
-            .create(true)
-            .append(file_mode == FileRedirectionType::Append)
-            .truncate(file_mode == FileRedirectionType::Truncate)
-            .open(file.as_str())
-        {
+    fn redirect_to_file(&self, file: String, file_mode: FileRedirectionType, out: String) -> Result<(), TaskError> {
+        match OpenOptions::new().create(true).append(file_mode == FileRedirectionType::Append).truncate(file_mode == FileRedirectionType::Truncate).open(file.as_str()) {
             Ok(mut f) => {
                 if let Err(e) = write!(f, "{}", out) {
                     Err(TaskError::new(
@@ -466,6 +445,45 @@ mod tests {
 
     #[test]
     fn test_task_pipeline_with_pipe_mode() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foobar")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("head"), String::from("-n"), String::from("1")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Pipe,
+        );
+        assert_eq!(task.relation, TaskRelation::Pipe);
+        //Verify next is something
+        assert!(task.next.is_some());
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr; output should be redirected to cat process, so should be None
+        let (stdout, stderr) = task.read().unwrap();
+        assert!(stdout.is_none());
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        let mut task: Task = *task.next.unwrap();
+        //Verify next task output is foobar
+        let (stdout, stderr) = task.read().unwrap();
+        assert_eq!(stdout.unwrap(), String::from("foobar\n"));
+        //Wait 500ms
+        sleep(Duration::from_millis(500));
+        //2nd Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_task_pipeline_with_pipe_mode_brokenpipe() {
         let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
         let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
         //Add pipe
@@ -481,29 +499,10 @@ mod tests {
         assert!(task.next.is_some());
         //Start process
         assert!(task.start().is_ok());
-        //Wait 100ms
-        sleep(Duration::from_millis(100));
-        //Read stdout/stderr
-        let (stdout, stderr) = task.read().unwrap();
-        //Verify stdout
-        assert_eq!(stdout.unwrap(), String::from("foo\n"));
-        //Verify stderr
-        assert!(stderr.is_none());
-        //Process should not be running anymore
-        assert!(!task.is_running());
-        //Get exitcode
-        assert_eq!(task.get_exitcode().unwrap(), 0);
-        //Start next process
-        let mut task: Task = *task.next.unwrap();
-        //Verify next of second process is None
-        assert_eq!(task.relation, TaskRelation::Unrelated);
-        //Process should have already terminated
-        //Read stdout/stderr
-        let (stdout, stderr) = task.read().unwrap();
-        //Verify stdout
-        assert_eq!(stdout.unwrap(), String::from("bar\n"));
-        //Verify stderr
-        assert!(stderr.is_none());
+        //Wait 500ms
+        sleep(Duration::from_millis(500));
+        //@! Since the second process has terminated before the first, it'll return broken pipe
+        assert_eq!(task.read().err().unwrap().code, TaskErrorCode::BrokenPipe);
         //Process should not be running anymore
         assert!(!task.is_running());
         //Get exitcode
