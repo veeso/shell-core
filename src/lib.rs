@@ -55,9 +55,6 @@ pub struct ShellCore {
     alias: HashMap<String, String>,                     //Aliases
     functions: HashMap<String, Vec<ShellStatement>>,    //Functions
     dirs: VecDeque<String>,                             //Directory stack
-    real_time: Duration,                                //Times for last job
-    user_time: Duration,                                //Times for last job
-    sys_time: Duration,                                 //Times for last job
     history: VecDeque<String>,                          //Shell history
     parser: Box<dyn ParseStatement>,                    //Parser
     buf_in: String,                                     //Input buffer
@@ -98,20 +95,45 @@ pub enum ShellError {
 /// The shell statement represents a single statement for Shell
 /// Tasks are pipelines
 /// The Statements are:
+/// - Alias: Association between name and command
 /// - Break: Break from current expression block if possible
+/// - Cd: change directory
 /// - Continue: Continue in the current expression block if possible
+/// - Exec: Perform Task
+/// - ExecHistory: Perform command from history
+/// - Exit: exit from expression
+/// - Export: export a variable into environ
 /// - For: For(Condition, Perform) iterator
+/// - If: If(Condition, Then, Else) condition
+/// - Popd: Pop directory from stack
+/// - Pushd: Push directory to directory stack
+/// - Read: Read command (Prompt, length)
 /// - Return: return value
+/// - Set: Set value into storage
+/// - Source: source file
 /// - Task: execute task
+/// - Time: execute with time
 /// - While: While(Condition, Perform) iterator
 #[derive(std::fmt::Debug)]
 pub enum ShellStatement {
+    Alias(String, String),
     Break,
+    Cd(PathBuf),
     Continue,
+    Dirs,
+    Exec(Task),
+    ExecHistory(usize),
+    Exit(u8),
+    Export(String, String),
     For(Task, Task),
     If(Task, Task, Option<Task>),
-    Perform(Task),
+    Set(String, String),
+    Popd,
+    Pushd(PathBuf),
+    Read(Option<String>, usize),
     Return(u8),
+    Source(PathBuf),
+    Time(Task),
     While(Task, Task)
 }
 
