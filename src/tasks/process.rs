@@ -49,7 +49,7 @@ use subprocess::{ExitStatus, Popen, PopenConfig, Redirection};
 ///
 /// Process represents a shell process execution instance
 /// it contains the command and the arguments passed at start and the process pipe
-
+#[derive(std::fmt::Debug)]
 pub struct Process {
     pub command: String,
     pub args: Vec<String>,

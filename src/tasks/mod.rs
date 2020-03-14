@@ -66,6 +66,7 @@ pub struct TaskError {
 /// ## Task
 ///
 /// Task is the entity which describes a single Task and the relation with the next Task in the pipeline
+#[derive(std::fmt::Debug)]
 pub struct Task {
     command: Vec<String>,            //Command argv
     process: Option<Process>,        //Current process in task

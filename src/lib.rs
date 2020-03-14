@@ -34,27 +34,34 @@ use std::time::{Duration, Instant};
 
 use tasks::TaskManager;
 use tasks::TaskError;
+use tasks::Task;
 
 /// ## ShellCore Struct
 ///
 /// The shell core is the main shell core access point and contains all the data necessary to run a shell.
 /// It also provides all the functions which a shell must provide
 pub struct ShellCore {
-    pub state: ShellState,            //Shell state
-    pub exit_code: u8,                //Exitcode of the last executed command
-    pub execution_time: Duration,     //Execution time of the last executed command
-    pub pid: Option<u32>,             //Pid of the current process
-    pub wrk_dir: PathBuf,             //Working directory
-    pub user: String,                 //Username
-    pub hostname: String,             //Hostname
-    home_dir: PathBuf,                //User home directory
-    prev_dir: PathBuf,                //Previous directory
-    execution_started: Instant,       //The instant when the last process was started
-    storage: HashMap<String, String>, //Session storage
-    history: VecDeque<String>,        //Shell history
-    parser: Box<dyn ParseStatement>,  //Parser
-    buf_in: String,                   //Input buffer
-    task_manager: Option<TaskManager> //Task Manager
+    pub state: ShellState,                              //Shell state
+    pub exit_code: u8,                                  //Exitcode of the last executed command
+    pub execution_time: Duration,                       //Execution time of the last executed command
+    pub pid: Option<u32>,                               //Pid of the current process
+    pub wrk_dir: PathBuf,                               //Working directory
+    pub user: String,                                   //Username
+    pub hostname: String,                               //Hostname
+    home_dir: PathBuf,                                  //User home directory
+    prev_dir: PathBuf,                                  //Previous directory
+    execution_started: Instant,                         //The instant when the last process was started
+    storage: HashMap<String, String>,                   //Session storage
+    alias: HashMap<String, String>,                     //Aliases
+    functions: HashMap<String, Vec<ShellStatement>>,    //Functions
+    dirs: VecDeque<String>,                             //Directory stack
+    real_time: Duration,                                //Times for last job
+    user_time: Duration,                                //Times for last job
+    sys_time: Duration,                                 //Times for last job
+    history: VecDeque<String>,                          //Shell history
+    parser: Box<dyn ParseStatement>,                    //Parser
+    buf_in: String,                                     //Input buffer
+    task_manager: Option<TaskManager>                   //Task Manager
 }
 
 /// ## ShellState
@@ -84,6 +91,28 @@ pub enum ShellError {
     PermissionDenied,
     TaskError(TaskError), //Error reported by task; please refer to task error
     Other //Anything which is an undefined behaviour. This should never be raised
+}
+
+/// ## ShellStatement
+/// 
+/// The shell statement represents a single statement for Shell
+/// Tasks are pipelines
+/// The Statements are:
+/// - Break: Break from current expression block if possible
+/// - Continue: Continue in the current expression block if possible
+/// - For: For(Condition, Perform) iterator
+/// - Return: return value
+/// - Task: execute task
+/// - While: While(Condition, Perform) iterator
+#[derive(std::fmt::Debug)]
+pub enum ShellStatement {
+    Break,
+    Continue,
+    For(Task, Task),
+    If(Task, Task, Option<Task>),
+    Perform(Task),
+    Return(u8),
+    While(Task, Task)
 }
 
 /// ## FileRedirectionType
