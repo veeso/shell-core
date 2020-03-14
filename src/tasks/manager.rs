@@ -69,7 +69,7 @@ impl TaskManager {
         let running_rc = Arc::clone(&self.running);
         let joined_rc = Arc::clone(&self.joined);
         //Get process out from TaskManager
-        let mut task = self.next.take().unwrap();
+        let task = self.next.take().unwrap();
         //Set running to true
         *running = true;
         //Start thread

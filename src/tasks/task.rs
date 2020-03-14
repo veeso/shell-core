@@ -277,6 +277,24 @@ impl Task {
     }
 }
 
+//@! Clone trait for Task
+impl Clone for Task {
+    fn clone(&self) -> Task {
+        Task {
+            command: self.command.clone(),
+            process: None,
+            stdout_redirection: self.stdout_redirection.clone(),
+            stderr_redirection: self.stderr_redirection.clone(),
+            relation: self.relation,
+            exit_code: None,
+            next: match &self.next {
+                None => None,
+                Some(task) => Some(task.clone())
+            }
+        }
+    }
+}
+
 //@! Module Test
 
 #[cfg(test)]
@@ -714,6 +732,46 @@ mod tests {
         );
         //Exit code should be 9
         assert!(task.get_exitcode().is_none());
+    }
+
+    #[test]
+    fn test_task_clone() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        //Run task just to see if is cloned successfully
+        //Start process
+        assert!(task.start().is_ok());
+        //Wait 100ms
+        sleep(Duration::from_millis(100));
+        //Read stdout/stderr
+        let (stdout, stderr) = task.read().unwrap();
+        //Verify stdout
+        assert_eq!(stdout.unwrap(), String::from("foo\n"));
+        //Verify stderr
+        assert!(stderr.is_none());
+        //Process should not be running anymore
+        assert!(!task.is_running());
+        //Get exitcode
+        assert_eq!(task.get_exitcode().unwrap(), 0);
+        //Clone task
+        let clone: Task = task.clone();
+        //Verify clone
+        assert!(clone.exit_code.is_none());
+        assert!(clone.process.is_none());
+        assert!(clone.next.is_some());
+        assert_eq!(clone.relation, TaskRelation::And);
+        assert_eq!(clone.stderr_redirection, Redirection::Stderr);
+        assert_eq!(clone.stdout_redirection, Redirection::Stdout);
+        assert_eq!(clone.command[0], String::from("echo"));
+        assert_eq!(clone.command[1], String::from("foo"));
     }
 
     fn create_tmpfile() -> tempfile::NamedTempFile {
