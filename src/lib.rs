@@ -41,24 +41,24 @@ use tasks::Task;
 /// The shell core is the main shell core access point and contains all the data necessary to run a shell.
 /// It also provides all the functions which a shell must provide
 pub struct ShellCore {
-    pub state: ShellState,                              //Shell state
-    pub exit_code: u8,                                  //Exitcode of the last executed command
-    pub execution_time: Duration,                       //Execution time of the last executed command
-    pub pid: Option<u32>,                               //Pid of the current process
-    pub wrk_dir: PathBuf,                               //Working directory
-    pub user: String,                                   //Username
-    pub hostname: String,                               //Hostname
-    home_dir: PathBuf,                                  //User home directory
-    prev_dir: PathBuf,                                  //Previous directory
-    execution_started: Instant,                         //The instant when the last process was started
-    storage: HashMap<String, String>,                   //Session storage
-    alias: HashMap<String, String>,                     //Aliases
-    functions: HashMap<String, Vec<ShellStatement>>,    //Functions
-    dirs: VecDeque<String>,                             //Directory stack
-    history: VecDeque<String>,                          //Shell history
-    parser: Box<dyn ParseStatement>,                    //Parser
-    buf_in: String,                                     //Input buffer
-    task_manager: Option<TaskManager>                   //Task Manager
+    pub state: ShellState,                      //Shell state
+    pub exit_code: u8,                          //Exitcode of the last executed command
+    pub execution_time: Duration,               //Execution time of the last executed command
+    pub pid: Option<u32>,                       //Pid of the current process
+    pub wrk_dir: PathBuf,                       //Working directory
+    pub user: String,                           //Username
+    pub hostname: String,                       //Hostname
+    home_dir: PathBuf,                          //User home directory
+    prev_dir: PathBuf,                          //Previous directory
+    execution_started: Instant,                 //The instant when the last process was started
+    storage: HashMap<String, String>,           //Session storage
+    alias: HashMap<String, String>,             //Aliases
+    functions: HashMap<String, ShellFunction>,  //Functions
+    dirs: VecDeque<PathBuf>,                    //Directory stack
+    history: VecDeque<String>,                  //Shell history
+    parser: Box<dyn ParseStatement>,            //Parser
+    buf_in: String,                             //Input buffer
+    task_manager: Option<TaskManager>           //Task Manager
 }
 
 /// ## ShellState
@@ -90,6 +90,15 @@ pub enum ShellError {
     Other //Anything which is an undefined behaviour. This should never be raised
 }
 
+/// ## ShellFunction
+/// 
+/// The Shell Function represents a shell function, which is made up of a name and a vector of statements
+#[derive(Clone, std::fmt::Debug)]
+pub struct ShellFunction {
+    pub name: String,
+    statements: Vec<ShellStatement>
+}
+
 /// ## ShellStatement
 /// 
 /// The shell statement represents a single statement for Shell
@@ -114,7 +123,7 @@ pub enum ShellError {
 /// - Task: execute task
 /// - Time: execute with time
 /// - While: While(Condition, Perform) iterator
-#[derive(std::fmt::Debug)]
+#[derive(Clone, std::fmt::Debug)]
 pub enum ShellStatement {
     Alias(String, String),
     Break,
@@ -125,16 +134,17 @@ pub enum ShellStatement {
     ExecHistory(usize),
     Exit(u8),
     Export(String, String),
-    For(Task, Task),
-    If(Task, Task, Option<Task>),
+    For(Task, Vec<ShellStatement>),
+    If(Task, Vec<ShellStatement>, Option<Vec<ShellStatement>>),
     Set(String, String),
-    Popd,
+    PopdBack,
+    PopdFront,
     Pushd(PathBuf),
     Read(Option<String>, usize),
     Return(u8),
     Source(PathBuf),
     Time(Task),
-    While(Task, Task)
+    While(Task, Vec<ShellStatement>)
 }
 
 /// ## FileRedirectionType
@@ -160,8 +170,8 @@ pub enum Redirection {
 ///
 /// the Parser error struct describes the error returned by the parser
 pub struct ParserError {
-    code: ParseErrorCode,
-    message: String,
+    pub code: ParseErrorCode,
+    pub message: String,
 }
 
 /// ## ParserErrorCode
