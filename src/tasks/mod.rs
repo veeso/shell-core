@@ -29,38 +29,13 @@
 
 pub(crate) mod manager;
 mod process;
-pub(crate) mod task;
+pub mod task;
 
 use crate::Redirection;
 use process::Process;
 
 use std::sync::{Arc, mpsc, Mutex};
 use std::thread;
-
-/// ## Task
-///
-/// Task is the entity which describes a single Task and the relation with the next Task in the pipeline
-pub(crate) struct Task {
-    command: Vec<String>,            //Command argv
-    process: Option<Process>,        //Current process in task
-    stdout_redirection: Redirection, //Stdout Redirection type
-    stderr_redirection: Redirection, //Stderr Redirection type
-    relation: TaskRelation,          //Task Relation with the next one
-    next: Option<Box<Task>>,         //Next process in task
-    exit_code: Option<u8>,           //Task exit code
-}
-
-/// ## TaskManager
-///
-/// TaskManager is the struct which handles the Task pipeline execution
-pub(crate) struct TaskManager {
-    running: Arc<Mutex<bool>>, //Running state
-    joined: Arc<Mutex<bool>>, //Tells thread it can terminate
-    m_loop: Option<thread::JoinHandle<u8>>, //Returns exitcode or TaskError in join handle
-    receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
-    sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages
-    next: Option<Task> //NOTE: Option because has to be taken by thread
-}
 
 /// ## TaskErrorCode
 ///
@@ -88,6 +63,31 @@ pub struct TaskError {
     message: String,
 }
 
+/// ## Task
+///
+/// Task is the entity which describes a single Task and the relation with the next Task in the pipeline
+pub struct Task {
+    command: Vec<String>,            //Command argv
+    process: Option<Process>,        //Current process in task
+    stdout_redirection: Redirection, //Stdout Redirection type
+    stderr_redirection: Redirection, //Stderr Redirection type
+    relation: TaskRelation,          //Task Relation with the next one
+    next: Option<Box<Task>>,         //Next process in task
+    exit_code: Option<u8>,           //Task exit code
+}
+
+/// ## TaskManager
+///
+/// TaskManager is the struct which handles the Task pipeline execution
+pub(crate) struct TaskManager {
+    running: Arc<Mutex<bool>>, //Running state
+    joined: Arc<Mutex<bool>>, //Tells thread it can terminate
+    m_loop: Option<thread::JoinHandle<u8>>, //Returns exitcode or TaskError in join handle
+    receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
+    sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages
+    next: Option<Task> //NOTE: Option because has to be taken by thread
+}
+
 /// ## TaskRelation
 ///
 /// The task relation describes the behaviour the task manager should apply in the task execution for the next command
@@ -97,7 +97,7 @@ pub struct TaskError {
 /// - Pipe: the commands are chained through a pipeline. This means they're executed at the same time and the output of the first is redirect to the output of the seconds one
 /// - Unrelated: the commands are executed without any relation. The return code is the return code of the last command executed
 #[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
-pub(crate) enum TaskRelation {
+pub enum TaskRelation {
     And,
     Or,
     Pipe,

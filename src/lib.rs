@@ -26,11 +26,14 @@
 //
 
 pub mod core;
-pub(crate) mod tasks;
+pub mod tasks;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+use tasks::TaskManager;
+use tasks::TaskError;
 
 /// ## ShellCore Struct
 ///
@@ -51,6 +54,7 @@ pub struct ShellCore {
     history: VecDeque<String>,        //Shell history
     parser: Box<dyn ParseStatement>,  //Parser
     buf_in: String,                   //Input buffer
+    task_manager: Option<TaskManager> //Task Manager
 }
 
 /// ## ShellState
@@ -70,11 +74,23 @@ pub enum ShellState {
     Terminated,
 }
 
+/// ## ShellError
+/// 
+/// The Shell Error represents an error raised by the Shell
+#[derive(std::fmt::Debug)]
+pub enum ShellError {
+    NoSuchFileOrDirectory,
+    NotADirectory,
+    PermissionDenied,
+    TaskError(TaskError), //Error reported by task; please refer to task error
+    Other //Anything which is an undefined behaviour. This should never be raised
+}
+
 /// ## FileRedirectionType
 ///
 /// FileRedirectionType enum describes the redirect type for files
 #[derive(Clone, PartialEq, std::fmt::Debug)]
-pub(crate) enum FileRedirectionType {
+pub enum FileRedirectionType {
     Truncate,
     Append,
 }
@@ -83,7 +99,7 @@ pub(crate) enum FileRedirectionType {
 ///
 /// Redirect enum describes the redirect type of a command
 #[derive(PartialEq, std::fmt::Debug)]
-pub(crate) enum Redirection {
+pub enum Redirection {
     Stdout,
     Stderr,
     File(String, FileRedirectionType),
