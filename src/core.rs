@@ -28,7 +28,9 @@
 extern crate dirs;
 extern crate whoami;
 
-use crate::{ShellCore, ShellError, ShellExpression, ShellState, ShellStatement, ParseStatement};
+use crate::{ParseStatement, ShellCore, ShellError, ShellExpression, ShellState, ShellStatement, ShellRunner, ShellStream, UserStream};
+use crate::streams;
+
 use std::collections::{HashMap, VecDeque};
 use dirs::home_dir;
 use std::env;
@@ -43,8 +45,8 @@ impl ShellCore {
 
     /// ### new
     /// 
-    /// Instantiate a new ShellCore
-    pub fn new(wrkdir: PathBuf, history_size: usize, parser: Box<dyn ParseStatement>) -> ShellCore {
+    /// Instantiate a new ShellCore. It also returns the User stream to be used during execution
+    pub fn new(wrkdir: PathBuf, history_size: usize, parser: Box<dyn ParseStatement>) -> (ShellCore, UserStream) {
         let hostname: String = whoami::host();
         let username: String = whoami::username();
         let home: PathBuf = match home_dir() {
@@ -53,7 +55,10 @@ impl ShellCore {
         };
         //set Working directory here
         let _ = env::set_current_dir(wrkdir.as_path());
-        ShellCore {
+        //Get streams
+        let (sstream, ustream) = streams::new_streams();
+        //Instantiate and return new core
+        let core = ShellCore {
             state: ShellState::Idle,
             exit_code: 0,
             execution_time: Duration::from_millis(0),
@@ -71,8 +76,10 @@ impl ShellCore {
             history: VecDeque::with_capacity(history_size),
             parser: parser,
             buf_in: String::new(),
-            task_manager: None
-        }
+            runner: ShellRunner::new(sstream)
+        };
+        //Return core and ustream
+        (core, ustream)
     }
 
     //@! Alias
@@ -188,12 +195,6 @@ impl ShellCore {
         Ok(files)
     }
 
-    //@! Flow Control
-
-    //TODO: for
-    //TODO: if
-    //TODO: while
-
     //@! Functions
 
     /// ### get_function
@@ -268,10 +269,7 @@ impl ShellCore {
         }
     }
 
-    //@! I/O
-
-    //TODO: read
-    //TODO: write
+    //TODO: input
 
     //@! Storage
 

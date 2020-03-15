@@ -26,10 +26,13 @@
 //
 
 pub mod core;
+mod runner;
+pub mod streams;
 pub mod tasks;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tasks::TaskManager;
@@ -41,24 +44,24 @@ use tasks::Task;
 /// The shell core is the main shell core access point and contains all the data necessary to run a shell.
 /// It also provides all the functions which a shell must provide
 pub struct ShellCore {
-    pub state: ShellState,                      //Shell state
-    pub exit_code: u8,                          //Exitcode of the last executed command
-    pub execution_time: Duration,               //Execution time of the last executed command
-    pub pid: Option<u32>,                       //Pid of the current process
-    pub wrk_dir: PathBuf,                       //Working directory
-    pub user: String,                           //Username
-    pub hostname: String,                       //Hostname
-    home_dir: PathBuf,                          //User home directory
-    prev_dir: PathBuf,                          //Previous directory
-    execution_started: Instant,                 //The instant when the last process was started
-    storage: HashMap<String, String>,           //Session storage
-    alias: HashMap<String, String>,             //Aliases
-    functions: HashMap<String, ShellExpression>,  //Functions
-    dirs: VecDeque<PathBuf>,                    //Directory stack
-    history: VecDeque<String>,                  //Shell history
-    parser: Box<dyn ParseStatement>,            //Parser
-    buf_in: String,                             //Input buffer
-    task_manager: Option<TaskManager>           //Task Manager
+    pub state: ShellState,                          //Shell state
+    pub exit_code: u8,                              //Exitcode of the last executed command
+    pub execution_time: Duration,                   //Execution time of the last executed command
+    pub pid: Option<u32>,                           //Pid of the current process
+    pub wrk_dir: PathBuf,                           //Working directory
+    pub user: String,                               //Username
+    pub hostname: String,                           //Hostname
+    home_dir: PathBuf,                              //User home directory
+    prev_dir: PathBuf,                              //Previous directory
+    execution_started: Instant,                     //The instant when the last process was started
+    storage: HashMap<String, String>,               //Session storage
+    alias: HashMap<String, String>,                 //Aliases
+    functions: HashMap<String, ShellExpression>,    //Functions
+    dirs: VecDeque<PathBuf>,                        //Directory stack
+    history: VecDeque<String>,                      //Shell history
+    parser: Box<dyn ParseStatement>,                //Parser
+    buf_in: String,                                 //Input buffer
+    runner: ShellRunner                             //Shell Runner
 }
 
 /// ## ShellState
@@ -146,6 +149,53 @@ pub enum ShellStatement {
     While(Task, Vec<ShellStatement>)
 }
 
+/// ## ShellRunner
+/// 
+/// The shell runner is the struct which takes care of running Shell Expressions
+pub struct ShellRunner {
+    task_manager: Option<TaskManager>,  //Task Manager
+    stream: ShellStream                 //Shell Stream
+}
+
+//@! Streams
+
+/// ## ShellStream
+/// 
+/// The shell stream contains the streams used by the Shell Runner to communicate with the UserStream
+
+pub(crate) struct ShellStream {
+    receiver: mpsc::Receiver<UserStreamMessage>,    //Receive User messages
+    sender: mpsc::Sender<ShellStreamMessage>,       //Sends Shell messages
+}
+
+/// ## UserStream
+/// 
+/// The user stream contains the streams used by the "user" to communicate with the ShellStream
+pub struct UserStream {
+    receiver: mpsc::Receiver<ShellStreamMessage>,   //Receive Shell messages
+    sender: mpsc::Sender<UserStreamMessage>,        //Sends User messages
+}
+
+/// ## ShellStreamMessage
+/// 
+/// The shell stream message contains the messages which can be sent by the ShellCore to the "user"
+pub enum ShellStreamMessage {
+    Output((Option<String>, Option<String>)),   //Shell Output (stdout, stderr)
+    Error(ShellError)                           //Shell Error
+}
+
+/// ## UserStreamMessage
+/// 
+/// The User stream message contains the messages which can be sent by the "user" to the ShellCore during the execution
+pub enum UserStreamMessage {
+    Input(String),          //Stdin
+    Kill,                   //Kill
+    Signal(UnixSignal),     //Signal
+    Terminate               //Terminate shell runner execution
+}
+
+//@! Redirection
+
 /// ## FileRedirectionType
 ///
 /// FileRedirectionType enum describes the redirect type for files
@@ -164,6 +214,8 @@ pub enum Redirection {
     Stderr,
     File(String, FileRedirectionType),
 }
+
+//@! Parser
 
 /// ## ParserError
 ///
@@ -184,6 +236,35 @@ pub enum ParseErrorCode {
     Incomplete,
     BadToken,
 }
+
+/// ## ParseStatement
+///
+/// ParseStatement is the trait which must be implemented by a shell parser engine (e.g. bash, fish, zsh...)
+pub trait ParseStatement {
+    /// ### parse
+    ///
+    /// The parse method MUST parse the statement and IF VALID perform an action provided by the ShellCore
+    ///
+    /// e.g. if the statement is a variable assignment, the method MUST call the shellcore set method.
+    /// Obviously, in case of error the core method hasn't to be called
+    fn parse(&self, statement: String) -> Result<(), ParserError>;
+}
+
+//@! Traits implementation
+
+impl Clone for Redirection {
+    fn clone(&self) -> Redirection {
+        match self {
+            Redirection::File(file, file_mode) => {
+                Redirection::File(file.clone(), file_mode.clone())
+            }
+            Redirection::Stderr => Redirection::Stderr,
+            Redirection::Stdout => Redirection::Stdout,
+        }
+    }
+}
+
+//@! Signals
 
 /// ## UnixSignal
 ///
@@ -221,31 +302,4 @@ pub enum UnixSignal {
     Sigio,
     Sigpwr,
     Sigsys
-}
-
-/// ## ParseStatement
-///
-/// ParseStatement is the trait which must be implemented by a shell parser engine (e.g. bash, fish, zsh...)
-pub trait ParseStatement {
-    /// ### parse
-    ///
-    /// The parse method MUST parse the statement and IF VALID perform an action provided by the ShellCore
-    ///
-    /// e.g. if the statement is a variable assignment, the method MUST call the shellcore set method.
-    /// Obviously, in case of error the core method hasn't to be called
-    fn parse(&self, statement: String) -> Result<(), ParserError>;
-}
-
-//@! Traits implementation
-
-impl Clone for Redirection {
-    fn clone(&self) -> Redirection {
-        match self {
-            Redirection::File(file, file_mode) => {
-                Redirection::File(file.clone(), file_mode.clone())
-            }
-            Redirection::Stderr => Redirection::Stderr,
-            Redirection::Stdout => Redirection::Stdout,
-        }
-    }
 }
