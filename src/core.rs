@@ -28,7 +28,7 @@
 extern crate dirs;
 extern crate whoami;
 
-use crate::{ParseStatement, ShellCore, ShellError, ShellExpression, ShellState, ShellStatement, ShellRunner, ShellStream, UserStream};
+use crate::{ParseErrorCode, ParseStatement, ShellCore, ShellError, ShellExpression, ShellState, ShellRunner, UserStream};
 use crate::streams;
 
 use std::collections::{HashMap, VecDeque};
@@ -87,14 +87,14 @@ impl ShellCore {
     /// ### get_all_alias
     /// 
     /// Returns the aliases in the current shell environment
-    pub fn get_all_alias(&self) -> HashMap<String, String> {
+    pub(crate) fn get_all_alias(&self) -> HashMap<String, String> {
         self.alias.clone()
     }
 
     /// ### get_alias
     /// 
     /// Returns the alias associated command with the provided name
-    pub fn get_alias(&self, alias: &String) -> Option<String> {
+    pub(crate) fn get_alias(&self, alias: &String) -> Option<String> {
         match self.alias.get(alias) {
             None => None,
             Some(s) => Some(s.clone())
@@ -104,14 +104,14 @@ impl ShellCore {
     /// ### set_alias
     /// 
     /// Set an alias in the current shell environment
-    pub fn set_alias(&mut self, alias: String, command: String) {
+    pub(crate) fn set_alias(&mut self, alias: String, command: String) {
         self.alias.insert(alias, command);
     }
 
     /// ### unalias
     /// 
     /// Remove an alias from the current shell environment
-    pub fn unalias(&mut self, alias: &String) -> Option<String> {
+    pub(crate) fn unalias(&mut self, alias: &String) -> Option<String> {
         self.alias.remove(alias)
     }
 
@@ -120,7 +120,7 @@ impl ShellCore {
     /// ### change_directory
     /// 
     /// Change current directory, the previous directory is stored as previous directory
-    pub fn change_directory(&mut self, directory: PathBuf) -> Result<(), ShellError> {
+    pub(crate) fn change_directory(&mut self, directory: PathBuf) -> Result<(), ShellError> {
         let current_prev_dir: PathBuf = self.prev_dir.clone();
         match env::set_current_dir(directory.as_path()) {
             Ok(()) => {
@@ -142,21 +142,21 @@ impl ShellCore {
     /// ### dirs
     /// 
     /// Returns the current dir stack
-    pub fn dirs(&self) -> VecDeque<PathBuf> {
+    pub(crate) fn dirs(&self) -> VecDeque<PathBuf> {
         self.dirs.clone()
     }
 
     /// ### popd_back
     /// 
     /// Pop directory from back
-    pub fn popd_back(&mut self) -> Option<PathBuf> {
+    pub(crate) fn popd_back(&mut self) -> Option<PathBuf> {
         self.dirs.pop_back()
     }
 
     /// ### popd_front
     /// 
     /// Pop directory from front
-    pub fn popd_front(&mut self) -> Option<PathBuf> {
+    pub(crate) fn popd_front(&mut self) -> Option<PathBuf> {
         self.dirs.pop_front()
     }
 
@@ -164,7 +164,7 @@ impl ShellCore {
     /// 
     /// Push directory to back of directory queue
     /// If the capacity (255) is higher than length +1, the front directory will be popped first
-    pub fn pushd(&mut self, dir: PathBuf) {
+    pub(crate) fn pushd(&mut self, dir: PathBuf) {
         if self.dirs.capacity() == self.dirs.len() + 1 {
             self.popd_front();
         }
@@ -200,7 +200,7 @@ impl ShellCore {
     /// ### get_function
     /// 
     /// Returns a function from the current Shell Environment
-    pub fn get_function(&self, name: &String) -> Option<ShellExpression> {
+    pub(crate) fn get_function(&self, name: &String) -> Option<ShellExpression> {
         match self.functions.get(name) {
             None => None,
             Some(f) => Some(f.clone())
@@ -210,18 +210,20 @@ impl ShellCore {
     /// ### set_function
     /// 
     /// Set a new Shell Function
-    pub fn set_function(&mut self, name: String, expression: ShellExpression) {
+    pub(crate) fn set_function(&mut self, name: String, expression: ShellExpression) {
         self.functions.insert(name, expression);
     }
 
-    //@! Exec
-
-    //TODO: exec
-    //TODO: exec async
-
     //@! Exit
     
-    //TODO: exit
+    /// ### exit
+    /// 
+    /// Terminate shell and exit
+    pub(crate) fn exit(&mut self) {
+        self.state = ShellState::Terminated;
+        //TODO: clean all
+        //TODO: reset memory
+    }
 
     //@! Getters
 
@@ -269,14 +271,59 @@ impl ShellCore {
         }
     }
 
-    //TODO: input
+    //@! Readline
+
+    /// ### readline
+    /// 
+    /// Read a line from input. 
+    /// This function must be used to take care of parsing an expression and executing it if it's valid
+    /// If the expression is not valid a ParserError is returned
+    /// NOTE: if the expression is incomplete `ShellError::Parser::Incomplete` is returned BUT the current input is stored in the shell core.
+    /// If you want to clear the buffer CALL flush()
+    pub fn readline(&mut self, stdin: String) -> Result<u8, ShellError> {
+        //Check shell is in Idle or Waiting
+        if self.state != ShellState::Idle && self.state != ShellState::Waiting {
+            return Err(ShellError::ShellNotInIdle)
+        }
+        //Try to parse line
+        match self.parser.parse(&stdin) {
+            Ok(expression) => {
+                //Set state to Running
+                self.state = ShellState::Running;
+                //Run expression
+                let rc: u8 = self.runner.run(self, expression);
+                //Set state back to Idle
+                self.state = ShellState::Idle;
+                Ok(rc)
+            },
+            Err(err) => {
+                match err.code {
+                    ParseErrorCode::Incomplete => {
+                        //Set state to Waiting and save stdin to buffer
+                        self.state = ShellState::Waiting;
+                        self.buf_in.push_str(stdin.as_str());
+                    },
+                    _ => {}
+                }
+                //Return error
+                Err(ShellError::Parser(err))
+            }
+        }
+    }
+
+    /// ### flush
+    /// 
+    /// Flush the current buffer
+    pub fn flush(&mut self) {
+        self.buf_in.clear();
+    }
 
     //@! Storage
 
     /// ### value_get
     /// 
     /// Get a value from the current shell environment, the value will be read from storage and if not found there in the environment storage
-    pub fn value_get(&self, key: &String) -> Option<String> {
+    pub(crate) fn value_get(&self, key: &String) -> Option<String> {
         if let Some(val) = self.storage_get(key) {
             Some(val)
         } else {
@@ -288,7 +335,7 @@ impl ShellCore {
     /// ### value_unset
     /// 
     /// Unset a value from storage and environ
-    pub fn value_unset(&mut self, key: &String) {
+    pub(crate) fn value_unset(&mut self, key: &String) {
         self.storage_unset(key);
         self.environ_unset(key);
     }
@@ -311,7 +358,7 @@ impl ShellCore {
     /// ### environ_set
     /// 
     /// Set a value in the environment
-    pub fn environ_set(&self, key: &String, value: &String) {
+    pub(crate) fn environ_set(&self, key: &String, value: &String) {
         env::set_var(key.clone(), value.clone());
     }
 
@@ -335,7 +382,7 @@ impl ShellCore {
     /// ### storage_set
     /// 
     /// Set a value in the Shell storage
-    pub fn storage_set(&mut self, key: String, value: String) {
+    pub(crate) fn storage_set(&mut self, key: String, value: String) {
         self.storage.insert(key, value);
     }
 

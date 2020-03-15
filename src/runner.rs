@@ -26,17 +26,27 @@
 // SOFTWARE.
 //
 
-use crate::{ShellExpression, ShellRunner, ShellStream, ShellStreamMessage, TaskManager, UserStreamMessage};
+use crate::{ShellCore, ShellExpression, ShellRunner, ShellStream, ShellStreamMessage, TaskManager, UserStreamMessage};
 
 impl ShellRunner {
 
-    /// ## new
+    /// ### new
     /// 
     /// Instantiate a new ShellRunner
     pub(crate) fn new(sstream: ShellStream) -> ShellRunner {
         ShellRunner {
             task_manager: None,
-            stream: sstream
+            stream: sstream,
+            buffer: String::new()
         }
+    }
+
+    /// ### run
+    /// 
+    /// Run a Shell Expression
+    pub(crate) fn run(&self, core: &mut ShellCore, expression: ShellExpression) -> u8 {
+        let mut rc: u8 = 0;
+        //TODO: implement
+        rc
     }
 }

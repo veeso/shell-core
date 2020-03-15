@@ -71,13 +71,13 @@ pub struct ShellCore {
 ///
 /// Idle: the shell is doing nothing and is waiting for new commands
 /// Waiting: the shell is waiting for further inputs (for example there is an incomplete expression in the buffer)
-/// Busy: the shell is busy running a process
+/// Running: the shell is running a process
 /// Terminated: the shell has terminated
 #[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
 pub enum ShellState {
     Idle,
     Waiting,
-    Busy,
+    Running,
     Terminated,
 }
 
@@ -89,8 +89,10 @@ pub enum ShellError {
     NoSuchFileOrDirectory,
     NotADirectory,
     PermissionDenied,
-    TaskError(TaskError), //Error reported by task; please refer to task error
-    Other //Anything which is an undefined behaviour. This should never be raised
+    ShellNotInIdle,         //The shell must be in Idle state to perform this action
+    TaskError(TaskError),   //Error reported by task; please refer to task error
+    Parser(ParserError),    //Error reported by the Parser
+    Other                   //Anything which is an undefined behaviour. This should never be raised
 }
 
 /// ## ShellFunction
@@ -154,7 +156,8 @@ pub enum ShellStatement {
 /// The shell runner is the struct which takes care of running Shell Expressions
 pub struct ShellRunner {
     task_manager: Option<TaskManager>,  //Task Manager
-    stream: ShellStream                 //Shell Stream
+    stream: ShellStream,                //Shell Stream
+    buffer: String                      //Input buffer
 }
 
 //@! Streams
@@ -220,6 +223,7 @@ pub enum Redirection {
 /// ## ParserError
 ///
 /// the Parser error struct describes the error returned by the parser
+#[derive(std::fmt::Debug)]
 pub struct ParserError {
     pub code: ParseErrorCode,
     pub message: String,
@@ -247,7 +251,7 @@ pub trait ParseStatement {
     ///
     /// e.g. if the statement is a variable assignment, the method MUST call the shellcore set method.
     /// Obviously, in case of error the core method hasn't to be called
-    fn parse(&self, statement: String) -> Result<(), ParserError>;
+    fn parse(&self, statement: &String) -> Result<ShellExpression, ParserError>;
 }
 
 //@! Traits implementation
