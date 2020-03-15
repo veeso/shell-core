@@ -28,7 +28,7 @@
 extern crate dirs;
 extern crate whoami;
 
-use crate::{ShellCore, ShellError, ShellFunction, ShellState, ShellStatement, ParseStatement};
+use crate::{ShellCore, ShellError, ShellExpression, ShellState, ShellStatement, ParseStatement};
 use std::collections::{HashMap, VecDeque};
 use dirs::home_dir;
 use std::env;
@@ -199,7 +199,7 @@ impl ShellCore {
     /// ### get_function
     /// 
     /// Returns a function from the current Shell Environment
-    pub fn get_function(&self, name: &String) -> Option<ShellFunction> {
+    pub fn get_function(&self, name: &String) -> Option<ShellExpression> {
         match self.functions.get(name) {
             None => None,
             Some(f) => Some(f.clone())
@@ -209,8 +209,8 @@ impl ShellCore {
     /// ### set_function
     /// 
     /// Set a new Shell Function
-    pub fn set_function(&mut self, function: ShellFunction) {
-        self.functions.insert(function.name.clone(), function);
+    pub fn set_function(&mut self, name: String, expression: ShellExpression) {
+        self.functions.insert(name, expression);
     }
 
     //@! Exec

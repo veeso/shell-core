@@ -53,7 +53,7 @@ pub struct ShellCore {
     execution_started: Instant,                 //The instant when the last process was started
     storage: HashMap<String, String>,           //Session storage
     alias: HashMap<String, String>,             //Aliases
-    functions: HashMap<String, ShellFunction>,  //Functions
+    functions: HashMap<String, ShellExpression>,  //Functions
     dirs: VecDeque<PathBuf>,                    //Directory stack
     history: VecDeque<String>,                  //Shell history
     parser: Box<dyn ParseStatement>,            //Parser
@@ -94,8 +94,7 @@ pub enum ShellError {
 /// 
 /// The Shell Function represents a shell function, which is made up of a name and a vector of statements
 #[derive(Clone, std::fmt::Debug)]
-pub struct ShellFunction {
-    pub name: String,
+pub struct ShellExpression {
     statements: Vec<ShellStatement>
 }
 
