@@ -46,7 +46,8 @@ impl ShellCore {
     /// ### new
     /// 
     /// Instantiate a new ShellCore. It also returns the User stream to be used during execution
-    pub fn new(wrkdir: PathBuf, history_size: usize, parser: Box<dyn ParseStatement>) -> (ShellCore, UserStream) {
+    /// If wrkdir is None, home will be the working directory
+    pub fn new(wrkdir: Option<PathBuf>, history_size: usize, parser: Box<dyn ParseStatement>) -> (ShellCore, UserStream) {
         let hostname: String = whoami::host();
         let username: String = whoami::username();
         let home: PathBuf = match home_dir() {
@@ -54,11 +55,15 @@ impl ShellCore {
             None => PathBuf::from("/"),
         };
         //set Working directory here
+        let wrkdir: PathBuf = match wrkdir {
+            Some(dir) => dir,
+            None => home.clone()
+        };
         let _ = env::set_current_dir(wrkdir.as_path());
         //Get streams
         let (sstream, ustream) = streams::new_streams();
         //Instantiate and return new core
-        let core = ShellCore {
+        let mut core = ShellCore {
             state: ShellState::Idle,
             exit_code: 0,
             execution_time: Duration::from_millis(0),
@@ -78,6 +83,8 @@ impl ShellCore {
             buf_in: String::new(),
             sstream: sstream
         };
+        //Push home to dirs
+        core.pushd(core.home_dir.clone());
         //Return core and ustream
         (core, ustream)
     }
@@ -121,10 +128,10 @@ impl ShellCore {
     /// 
     /// Change current directory, the previous directory is stored as previous directory
     pub(crate) fn change_directory(&mut self, directory: PathBuf) -> Result<(), ShellError> {
-        let current_prev_dir: PathBuf = self.prev_dir.clone();
+        let current_dir: PathBuf = self.wrk_dir.clone();
         match env::set_current_dir(directory.as_path()) {
             Ok(()) => {
-                self.prev_dir = current_prev_dir;
+                self.prev_dir = current_dir;
                 self.wrk_dir = directory;
                 Ok(())
             },
@@ -168,7 +175,30 @@ impl ShellCore {
         if self.dirs.capacity() == self.dirs.len() + 1 {
             self.popd_front();
         }
-        self.dirs.push_back(dir);
+        self.dirs.push_front(dir);
+    }
+
+    //@! Exit
+    
+    /// ### exit
+    /// 
+    /// Terminate shell and exit
+    pub(crate) fn exit(&mut self) {
+        self.state = ShellState::Terminated;
+        self.exit_code = 0;
+        self.execution_time = Duration::from_secs(0);
+        self.pid = None;
+        self.user.clear();
+        self.wrk_dir = PathBuf::from("");
+        self.home_dir = PathBuf::from("");
+        self.prev_dir = PathBuf::from("");
+        self.hostname.clear();
+        self.storage.clear();
+        self.alias.clear();
+        self.functions.clear();
+        self.dirs.clear();
+        self.history.clear();
+        self.buf_in.clear();
     }
 
     //@! Files
@@ -214,25 +244,6 @@ impl ShellCore {
         self.functions.insert(name, expression);
     }
 
-    //@! Exit
-    
-    /// ### exit
-    /// 
-    /// Terminate shell and exit
-    pub(crate) fn exit(&mut self) {
-        self.state = ShellState::Terminated;
-        self.exit_code = 0;
-        self.execution_time = Duration::from_secs(0);
-        self.pid = None;
-        self.user.clear();
-        self.hostname.clear();
-        self.storage.clear();
-        self.alias.clear();
-        self.functions.clear();
-        self.history.clear();
-        self.buf_in.clear();
-    }
-
     //@! Getters
 
     /// ### get_home
@@ -263,7 +274,7 @@ impl ShellCore {
         let mut wrkdir: String = String::from(self.wrk_dir.clone().as_path().to_str().unwrap());
         let home_dir_str: String = String::from(self.home_dir.clone().as_path().to_str().unwrap());
         if wrkdir.starts_with(home_dir_str.as_str()) {
-            wrkdir.replace(home_dir_str.as_str(), "~");
+            wrkdir = wrkdir.replace(home_dir_str.as_str(), "~");
         }
         wrkdir
     }
@@ -281,6 +292,13 @@ impl ShellCore {
         }
     }
 
+    /// ### history_get
+    /// 
+    /// Returns the entire history copy
+    pub fn history_get(&self) -> VecDeque<String> {
+        self.history.clone()
+    }
+
     /// ### history_load
     /// 
     /// Load history
@@ -288,14 +306,27 @@ impl ShellCore {
     pub fn history_load(&mut self, history: VecDeque<String>) {
         //Clear current history
         self.history.clear();
-        //Iterate over provided history
-        let history_size: usize = self.history.capacity();
+        //Iterate over provided history NOTE: VecDeque allocates capacity / 2 - 1
+        let history_size: usize = (self.history.capacity() + 1) / 2;
         for (index, entry) in history.iter().enumerate() {
             if index >= history_size {
                 break;
             }
-            self.history.push_back(entry.clone());
+            self.history.push_front(entry.clone());
         }
+    }
+
+    /// ### history_push
+    /// 
+    /// Push a new entry to the history.
+    /// The entry is stored at the front of the history. The first the newest
+    fn history_push(&mut self, expression: String) {
+        //Check if history overflows the size
+        let history_size: usize = (self.history.capacity() + 1) / 2;
+        if self.history.len() + 1 > history_size {
+            self.history.pop_back();
+        }
+        self.history.push_front(expression);
     }
 
     //@! Misc
@@ -331,16 +362,25 @@ impl ShellCore {
         if self.state != ShellState::Idle && self.state != ShellState::Waiting {
             return Err(ShellError::ShellNotInIdle)
         }
+        //If state is Waiting, concatenate bufin and stdin
+        let stdin: String = match self.state {
+            ShellState::Waiting => {
+                self.buf_in.clone() + &stdin
+            },
+            _ => stdin
+        };
         //Try to parse line
         match self.parser.parse(&stdin) {
             Ok(expression) => {
+                //Push stdin to history
+                self.history_push(stdin.clone());
                 //Set state to Running
                 self.state = ShellState::Running;
-                //Run expression
                 //Instantiate runner
                 let mut runner: ShellRunner = ShellRunner::new();
                 //Set execution time
                 self.execution_started = Instant::now();
+                //Run expression
                 let rc: u8 = runner.run(self, expression);
                 self.execution_time = self.execution_started.elapsed();
                 //Set state back to Idle
@@ -354,7 +394,10 @@ impl ShellCore {
                         self.state = ShellState::Waiting;
                         self.buf_in.push_str(stdin.as_str());
                     },
-                    _ => {}
+                    _ => {
+                        //Push stdin to history
+                        self.history_push(stdin.clone());
+                    }
                 }
                 //Return error
                 Err(ShellError::Parser(err))
@@ -451,10 +494,16 @@ mod tests {
 
     use super::*;
     use crate::parsers::bash::Bash;
+    use crate::ShellStatement;
+    #[cfg(any(unix, macos, linux))]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(any(unix, macos, linux))]
+    use std::fs::metadata;
 
+    #[test]
     fn test_core_new() {
         //Instantiate Core
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(PathBuf::from("/tmp/"), 2048, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 2048, Box::new(Bash {}));
         //Verify core parameters
         assert_eq!(core.state, ShellState::Idle);
         assert_eq!(core.exit_code, 0);
@@ -468,19 +517,201 @@ mod tests {
         assert_eq!(core.storage.len(), 0);
         assert_eq!(core.alias.len(), 0);
         assert_eq!(core.functions.len(), 0);
-        assert_eq!(core.dirs.len(), 0);
+        assert_eq!(core.dirs.len(), 1); //Contains home
+        assert_eq!(core.dirs[0], home_dir().unwrap());
         assert_eq!(core.history.len(), 0);
         assert_eq!(core.buf_in.len(), 0);
+        //Test without working directory
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        assert_eq!(core.wrk_dir, core.home_dir);
     }
 
-    //TODO: alias (set, get, unalias, get all)
-    //TODO: change_dir
-    //TODO: get_files
-    //TODO: get_home
-    //TODO: get_previous_dir
-    //TODO: history_load
-    //TODO: history_get
-    //TODO: value_get
-    //TODO: value_unset
-    //TODO: environ_set
+    #[test]
+    fn test_core_alias() {
+        //Instantiate Core
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        //Set alias
+        core.set_alias(String::from("ll"), String::from("ls -l"));
+        //Get alias
+        assert_eq!(core.get_alias(&String::from("ll")).unwrap(), String::from("ls -l"));
+        //Try to get unexisting alias
+        assert!(core.get_alias(&String::from("foobar")).is_none());
+        //Override alias
+        core.set_alias(String::from("ll"), String::from("ls -l --color=auto"));
+        assert_eq!(core.get_alias(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
+        //Add another alias and test get all alias
+        core.set_alias(String::from("please"), String::from("sudo"));
+        let alias_table: HashMap<String, String> = core.get_all_alias();
+        //Verify table
+        assert_eq!(alias_table.len(), 2);
+        //Test unalias
+        assert!(core.unalias(&String::from("ll")).is_some());
+        assert!(core.unalias(&String::from("please")).is_some());
+        assert!(core.unalias(&String::from("foobar")).is_none());
+        assert!(core.get_alias(&String::from("ll")).is_none());
+        assert!(core.get_alias(&String::from("please")).is_none());
+    }
+
+    #[test]
+    fn test_core_change_dir() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 2048, Box::new(Bash {}));
+        //Change directory
+        assert!(core.change_directory(PathBuf::from("/var/")).is_ok());
+        //Verify current directory/previous directory
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/var/"));
+        assert_eq!(core.get_prev_dir(), PathBuf::from("/tmp/"));
+        //Change directory to unexisting directory
+        assert_eq!(core.change_directory(PathBuf::from("/pippoland/")).err().unwrap(), ShellError::NoSuchFileOrDirectory);
+        //Verify directories didn't change
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/var/"));
+        assert_eq!(core.get_prev_dir(), PathBuf::from("/tmp/"));
+        //Try to change directory to file
+        let tmpfile: tempfile::NamedTempFile = create_tmpfile();
+        assert_eq!(core.change_directory(PathBuf::from(tmpfile.path())).err().unwrap(), ShellError::NotADirectory);
+    }
+
+    #[test]
+    #[cfg(any(unix, macos))]
+    /// This test fails on WSL
+    fn test_core_change_dir_unix() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 2048, Box::new(Bash {}));
+        //Try to change directory to a directory where you can't enter
+        let tmpdir: tempfile::TempDir = create_tmpdir();
+        let metadata = metadata(tmpdir.path()).unwrap();
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o000);
+        assert_eq!(permissions.mode(), 0o000);
+        //Try to enter tmpdir
+        assert_eq!(core.change_directory(PathBuf::from(tmpdir.path())).err().unwrap(), ShellError::PermissionDenied);
+    }
+
+    #[test]
+    fn test_core_dirs() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        //Dirs contains only home once the object is istantiated
+        assert_eq!(core.dirs().len(), 1);
+        assert_eq!(core.dirs()[0], core.home_dir.clone());
+        //Push directory
+        core.pushd(PathBuf::from("/tmp/"));
+        //Verify dirs; /tmp/ should be the first element
+        assert_eq!(core.dirs().len(), 2);
+        assert_eq!(core.dirs()[0], PathBuf::from("/tmp/"));
+        assert_eq!(core.dirs()[1], core.home_dir.clone());
+        //Popd front
+        assert_eq!(core.popd_front().unwrap(), PathBuf::from("/tmp/"));
+        assert_eq!(core.dirs().len(), 1);
+        //Push directory
+        core.pushd(PathBuf::from("/etc/"));
+        //Popd back
+        assert_eq!(core.popd_back().unwrap(), core.home_dir.clone());
+        assert_eq!(core.dirs().len(), 1);
+        assert_eq!(core.popd_back().unwrap(), PathBuf::from("/etc/"));
+        //Try to pop when stack is empty
+        assert!(core.popd_front().is_none());
+    }
+
+    #[test]
+    fn test_core_get_files() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        //CD to tmp
+        assert!(core.change_directory(PathBuf::from("/tmp/")).is_ok());
+        //Create tmp files
+        let tmpfile1: tempfile::NamedTempFile = create_tmpfile();
+        let tmpfile2: tempfile::NamedTempFile = create_tmpfile();
+        //List files
+        let files: Vec<DirEntry> = core.get_files().unwrap();
+        let mut matches: usize = 0;
+        for file in files.iter() {
+            if file.file_name() == tmpfile1.path().file_name().unwrap() {
+                matches += 1;
+            } else if file.file_name() == tmpfile2.path().file_name().unwrap() {
+                matches += 1;
+            }
+        }
+        assert_eq!(matches, 2);
+    }
+
+    #[test]
+    fn test_core_exit() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        core.exit();
+        assert_eq!(core.state, ShellState::Terminated);
+        assert_eq!(core.user.len(), 0);
+        assert_eq!(core.hostname.len(), 0);
+        assert_eq!(core.home_dir, PathBuf::from(""));
+        assert_eq!(core.prev_dir, PathBuf::from(""));
+        assert_eq!(core.wrk_dir, PathBuf::from(""));
+        assert_eq!(core.dirs.len(), 0);
+    }
+
+    #[test]
+    fn test_core_functions() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        //Get unexisting function
+        assert!(core.get_function(&String::from("testfunc")).is_none());
+        //Create function
+        let test_function: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        //Set function
+        core.set_function(String::from("testfunc"), test_function);
+        //Verify function exists
+        assert!(core.get_function(&String::from("testfunc")).is_some());
+    }
+
+    #[test]
+    fn test_core_getters() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        assert_eq!(core.get_home(), core.home_dir.clone());
+        assert_eq!(core.get_prev_dir(), core.home_dir.clone());
+        assert_eq!(core.get_wrkdir(), core.wrk_dir.clone());
+        assert_eq!(core.get_wrkdir_pretty(), String::from("~"));
+    }
+
+    #[test]
+    fn test_core_history() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2, Box::new(Bash {})); //@! History size => 2
+        //Verify history is empty
+        assert_eq!(core.history_get().len(), 0);
+        //Try to get from history
+        assert!(core.history_at(0).is_none());
+        //Push to history
+        core.history_push(String::from("cargo test"));
+        assert_eq!(core.history_at(0).unwrap(), String::from("cargo test"));
+        //Push another line
+        core.history_push(String::from("git status"));
+        //Git status is now index 0, while cargo test is index 1
+        assert_eq!(core.history_at(0).unwrap(), String::from("git status"));
+        assert_eq!(core.history_at(1).unwrap(), String::from("cargo test"));
+        //Push another line
+        core.history_push(String::from("git commit -a -m 'random commit'"));
+        //Max history length has been set to 2, to there should be only two lines
+        assert_eq!(core.history.len(), 2);
+        assert_eq!(core.history_at(0).unwrap(), String::from("git commit -a -m 'random commit'"));
+        assert_eq!(core.history_at(1).unwrap(), String::from("git status"));
+        //Clear history
+        core.history.clear();
+        //Load history
+        let mut history: VecDeque<String> = VecDeque::with_capacity(3);
+        history.push_back(String::from("command 1"));
+        history.push_back(String::from("command 2"));
+        history.push_back(String::from("command 3"));
+        core.history_load(history);
+        //Length must be 2, since history size is 2
+        assert_eq!(core.history.len(), 2);
+        assert_eq!(core.history_at(0).unwrap(), String::from("command 2"));
+        assert_eq!(core.history_at(1).unwrap(), String::from("command 1"));
+    }
+    
+    //TODO: Misc
+    //TODO: readline
+    //TODO: storage
+
+    fn create_tmpfile() -> tempfile::NamedTempFile {
+        tempfile::NamedTempFile::new().unwrap()
+    }
+
+    fn create_tmpdir() -> tempfile::TempDir {
+        tempfile::TempDir::new().unwrap()
+    }
 }

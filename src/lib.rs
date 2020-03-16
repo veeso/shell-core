@@ -85,7 +85,7 @@ pub enum ShellState {
 /// ## ShellError
 /// 
 /// The Shell Error represents an error raised by the Shell
-#[derive(std::fmt::Debug)]
+#[derive(PartialEq, std::fmt::Debug)]
 pub enum ShellError {
     NoSuchFileOrDirectory,
     NotADirectory,
@@ -223,7 +223,7 @@ pub enum Redirection {
 /// ## ParserError
 ///
 /// the Parser error struct describes the error returned by the parser
-#[derive(std::fmt::Debug)]
+#[derive(PartialEq, std::fmt::Debug)]
 pub struct ParserError {
     pub code: ParserErrorCode,
     pub message: String,

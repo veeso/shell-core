@@ -57,7 +57,7 @@ pub enum TaskErrorCode {
 /// ## TaskError
 ///
 /// The task error represents the error raised by a task. It is made up of the error code and of a certain message
-#[derive(std::fmt::Debug)]
+#[derive(PartialEq, std::fmt::Debug)]
 pub struct TaskError {
     code: TaskErrorCode,
     message: String,
