@@ -63,9 +63,9 @@ impl ShellCore {
             exit_code: 0,
             execution_time: Duration::from_millis(0),
             pid: None,
-            wrk_dir: wrkdir,
             user: username,
             hostname: hostname,
+            wrk_dir: wrkdir,
             home_dir: home.clone(),
             prev_dir: home,
             execution_started: Instant::now(),
@@ -221,8 +221,16 @@ impl ShellCore {
     /// Terminate shell and exit
     pub(crate) fn exit(&mut self) {
         self.state = ShellState::Terminated;
-        //TODO: clean all
-        //TODO: reset memory
+        self.exit_code = 0;
+        self.execution_time = Duration::from_secs(0);
+        self.pid = None;
+        self.user.clear();
+        self.hostname.clear();
+        self.storage.clear();
+        self.alias.clear();
+        self.functions.clear();
+        self.history.clear();
+        self.buf_in.clear();
     }
 
     //@! Getters
@@ -239,6 +247,25 @@ impl ShellCore {
     /// Returns the previous directory
     pub fn get_prev_dir(&self) -> PathBuf {
         self.prev_dir.clone()
+    }
+
+    /// ### get_wrkdir
+    /// 
+    /// Returns the working directory.
+    pub fn get_wrkdir(&self) -> PathBuf {
+        self.wrk_dir.clone()
+    }
+
+    /// ### get_wrkdir_pretty
+    /// 
+    /// Returns the current working directory with resolved paths for prompt
+    pub fn get_wrkdir_pretty(&self) -> String {
+        let mut wrkdir: String = String::from(self.wrk_dir.clone().as_path().to_str().unwrap());
+        let home_dir_str: String = String::from(self.home_dir.clone().as_path().to_str().unwrap());
+        if wrkdir.starts_with(home_dir_str.as_str()) {
+            wrkdir.replace(home_dir_str.as_str(), "~");
+        }
+        wrkdir
     }
 
     //@! History
@@ -271,6 +298,25 @@ impl ShellCore {
         }
     }
 
+    //@! Misc
+
+    /// ### resolve_path
+    /// 
+    /// Resolve path
+    pub(crate) fn resolve_path(&self, path: String) -> PathBuf {
+        let mut resolved_path: String = path.clone();
+        //If path starts with '~', replace ~ with home dir
+        if resolved_path.starts_with("~") {
+            let orig_path: String = resolved_path.clone();
+            let path_after_tilde = &orig_path.as_str()[1..];
+            resolved_path = String::from(self.home_dir.as_path().to_str().unwrap());
+            resolved_path.push_str(path_after_tilde);
+        }
+        PathBuf::from(resolved_path)
+    }
+
+    //TODO: reverse search
+
     //@! Readline
 
     /// ### readline
@@ -293,7 +339,10 @@ impl ShellCore {
                 //Run expression
                 //Instantiate runner
                 let mut runner: ShellRunner = ShellRunner::new();
+                //Set execution time
+                self.execution_started = Instant::now();
                 let rc: u8 = runner.run(self, expression);
+                self.execution_time = self.execution_started.elapsed();
                 //Set state back to Idle
                 self.state = ShellState::Idle;
                 Ok(rc)
@@ -395,20 +444,34 @@ impl ShellCore {
         let _ = self.storage.remove(key);
     }
 
-    //@! Time
-
-    //TODO: get time
-
 }
 
 #[cfg(test)]
 mod tests {
 
-    //use super::*;
+    use super::*;
+    use crate::parsers::bash::Bash;
 
-    //fn test_core_new() {
-    //    let core: ShellCore = ShellCore::new(PathBuf::from("/tmp/"), 2048, );
-    //}
+    fn test_core_new() {
+        //Instantiate Core
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(PathBuf::from("/tmp/"), 2048, Box::new(Bash {}));
+        //Verify core parameters
+        assert_eq!(core.state, ShellState::Idle);
+        assert_eq!(core.exit_code, 0);
+        assert_eq!(core.execution_time.as_millis(), 0);
+        assert!(core.pid.is_none());
+        assert_eq!(core.hostname, whoami::host());
+        assert_eq!(core.user, whoami::username());
+        assert_eq!(core.wrk_dir, PathBuf::from("/tmp/"));
+        assert_eq!(core.home_dir, home_dir().unwrap());
+        assert_eq!(core.prev_dir, home_dir().unwrap());
+        assert_eq!(core.storage.len(), 0);
+        assert_eq!(core.alias.len(), 0);
+        assert_eq!(core.functions.len(), 0);
+        assert_eq!(core.dirs.len(), 0);
+        assert_eq!(core.history.len(), 0);
+        assert_eq!(core.buf_in.len(), 0);
+    }
 
     //TODO: alias (set, get, unalias, get all)
     //TODO: change_dir

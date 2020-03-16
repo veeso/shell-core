@@ -29,6 +29,8 @@ use crate::{ParseStatement, ParserError, ParserErrorCode, ShellExpression, Shell
 
 pub struct Bash {}
 
+//TODO: remember to resolve path before using them
+
 impl ParseStatement for Bash {
     fn parse(&self, statement: &String) -> Result<ShellExpression, ParserError> {
         //TODO: implement

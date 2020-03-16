@@ -49,9 +49,9 @@ pub struct ShellCore {
     pub exit_code: u8,                              //Exitcode of the last executed command
     pub execution_time: Duration,                   //Execution time of the last executed command
     pub pid: Option<u32>,                           //Pid of the current process
-    pub wrk_dir: PathBuf,                           //Working directory
     pub user: String,                               //Username
     pub hostname: String,                           //Hostname
+    wrk_dir: PathBuf,                               //Working directory
     home_dir: PathBuf,                              //User home directory
     prev_dir: PathBuf,                              //Previous directory
     execution_started: Instant,                     //The instant when the last process was started
