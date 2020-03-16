@@ -28,6 +28,7 @@
 pub mod core;
 mod runner;
 pub mod streams;
+pub mod parsers;
 pub mod tasks;
 
 use std::collections::{HashMap, VecDeque};
@@ -224,8 +225,20 @@ pub enum Redirection {
 /// the Parser error struct describes the error returned by the parser
 #[derive(std::fmt::Debug)]
 pub struct ParserError {
-    pub code: ParseErrorCode,
+    pub code: ParserErrorCode,
     pub message: String,
+}
+
+impl ParserError {
+    /// ## new
+    ///
+    /// Instantiate a new Task Error struct
+    pub(crate) fn new(code: ParserErrorCode, message: String) -> ParserError {
+        ParserError {
+            code: code,
+            message: message,
+        }
+    }
 }
 
 /// ## ParserErrorCode
@@ -235,7 +248,7 @@ pub struct ParserError {
 /// - Incomplete: the statement is incomplete, further input is required. This should bring the Core to Waiting state
 /// - BadToken: a bad token was found in the statement
 #[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
-pub enum ParseErrorCode {
+pub enum ParserErrorCode {
     Incomplete,
     BadToken,
 }

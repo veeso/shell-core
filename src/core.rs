@@ -28,7 +28,7 @@
 extern crate dirs;
 extern crate whoami;
 
-use crate::{ParseErrorCode, ParseStatement, ShellCore, ShellError, ShellExpression, ShellState, ShellRunner, UserStream};
+use crate::{ParserErrorCode, ParseStatement, ShellCore, ShellError, ShellExpression, ShellState, ShellRunner, UserStream};
 use crate::streams;
 
 use std::collections::{HashMap, VecDeque};
@@ -300,7 +300,7 @@ impl ShellCore {
             },
             Err(err) => {
                 match err.code {
-                    ParseErrorCode::Incomplete => {
+                    ParserErrorCode::Incomplete => {
                         //Set state to Waiting and save stdin to buffer
                         self.state = ShellState::Waiting;
                         self.buf_in.push_str(stdin.as_str());
