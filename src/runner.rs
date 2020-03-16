@@ -33,10 +33,9 @@ impl ShellRunner {
     /// ### new
     /// 
     /// Instantiate a new ShellRunner
-    pub(crate) fn new(sstream: ShellStream) -> ShellRunner {
+    pub(crate) fn new() -> ShellRunner {
         ShellRunner {
             task_manager: None,
-            stream: sstream,
             buffer: String::new()
         }
     }

@@ -61,7 +61,7 @@ pub struct ShellCore {
     history: VecDeque<String>,                      //Shell history
     parser: Box<dyn ParseStatement>,                //Parser
     buf_in: String,                                 //Input buffer
-    runner: ShellRunner                             //Shell Runner
+    sstream: ShellStream                            //ShellStream
 }
 
 /// ## ShellState
@@ -156,7 +156,6 @@ pub enum ShellStatement {
 /// The shell runner is the struct which takes care of running Shell Expressions
 pub struct ShellRunner {
     task_manager: Option<TaskManager>,  //Task Manager
-    stream: ShellStream,                //Shell Stream
     buffer: String                      //Input buffer
 }
 

@@ -76,7 +76,7 @@ impl ShellCore {
             history: VecDeque::with_capacity(history_size),
             parser: parser,
             buf_in: String::new(),
-            runner: ShellRunner::new(sstream)
+            sstream: sstream
         };
         //Return core and ustream
         (core, ustream)
@@ -291,7 +291,9 @@ impl ShellCore {
                 //Set state to Running
                 self.state = ShellState::Running;
                 //Run expression
-                let rc: u8 = self.runner.run(self, expression);
+                //Instantiate runner
+                let mut runner: ShellRunner = ShellRunner::new();
+                let rc: u8 = runner.run(self, expression);
                 //Set state back to Idle
                 self.state = ShellState::Idle;
                 Ok(rc)
