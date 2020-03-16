@@ -495,10 +495,8 @@ mod tests {
     use super::*;
     use crate::parsers::bash::Bash;
     use crate::ShellStatement;
-    #[cfg(any(unix, macos, linux))]
-    use std::os::unix::fs::PermissionsExt;
-    #[cfg(any(unix, macos, linux))]
-    use std::fs::metadata;
+
+    use std::process::Command;
 
     #[test]
     fn test_core_new() {
@@ -568,20 +566,11 @@ mod tests {
         //Try to change directory to file
         let tmpfile: tempfile::NamedTempFile = create_tmpfile();
         assert_eq!(core.change_directory(PathBuf::from(tmpfile.path())).err().unwrap(), ShellError::NotADirectory);
-    }
-
-    #[test]
-    #[cfg(any(unix, macos))]
-    /// This test fails on WSL
-    fn test_core_change_dir_unix() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 2048, Box::new(Bash {}));
         //Try to change directory to a directory where you can't enter
         let tmpdir: tempfile::TempDir = create_tmpdir();
-        let metadata = metadata(tmpdir.path()).unwrap();
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(0o000);
-        assert_eq!(permissions.mode(), 0o000);
-        //Try to enter tmpdir
+        //Use chmod instead of set_mode because it just doesn't work...
+        assert!(Command::new("chmod").args(&["000", tmpdir.path().to_str().unwrap()]).status().is_ok());
+        //Okay, now try to change directory inside that directory
         assert_eq!(core.change_directory(PathBuf::from(tmpdir.path())).err().unwrap(), ShellError::PermissionDenied);
     }
 
