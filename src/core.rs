@@ -346,7 +346,52 @@ impl ShellCore {
         PathBuf::from(resolved_path)
     }
 
-    //TODO: reverse search
+    /// ### reverse_search
+    /// 
+    /// Search for a string match in the history
+    /// This functions returns the list of all the first 'max_entries' in the history
+    /// NOTE: this function may allocate a lot of memory, use reverse_search_hit to preserve memory
+    pub fn reverse_search(&self, needle: &String, max_entries: Option<usize>) -> Option<Vec<String>> {
+        let mut matches: Vec<String> = Vec::new();
+        //Iterate over history
+        for entry in self.history.iter() {
+            if entry.as_str().contains(needle.as_str()) {
+                matches.push(entry.clone());
+            }
+            //Check if matches length has reached max entries
+            if let Some(max_entries) = max_entries {
+                if matches.len() == max_entries {
+                    break;
+                }
+            }
+        }
+        //Return matches or None
+        match matches.len() {
+            0 => None,
+            _ => Some(matches)
+        }
+    }
+
+    /// ### reverse_search_hits
+    /// 
+    /// Search for a string match in the history
+    /// This functions returns the nth match in the history from the newer to the oldest entry in the history
+    /// Matches start from 0 to n. If hit is higher than the maximum match, None is returned
+    pub fn reverse_search_hits(&self, needle: &String, hit: usize) -> Option<String> {
+        let mut matchnth: usize = 0;
+        //Iterate over history
+        for entry in self.history.iter() {
+            if entry.as_str().contains(needle.as_str()) {
+                //If matchnth == hit, return entry
+                if matchnth == hit {
+                    return Some(entry.clone())
+                }
+                //Increment matchnth
+                matchnth += 1;
+            }
+        }
+        None
+    }
 
     //@! Readline
 
@@ -452,8 +497,8 @@ impl ShellCore {
     /// ### environ_set
     /// 
     /// Set a value in the environment
-    pub(crate) fn environ_set(&self, key: &String, value: &String) {
-        env::set_var(key.clone(), value.clone());
+    pub(crate) fn environ_set(&self, key: String, value: String) {
+        env::set_var(key, value);
     }
 
     /// ### environ_unset
@@ -501,7 +546,7 @@ mod tests {
     #[test]
     fn test_core_new() {
         //Instantiate Core
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 2048, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 128, Box::new(Bash {}));
         //Verify core parameters
         assert_eq!(core.state, ShellState::Idle);
         assert_eq!(core.exit_code, 0);
@@ -513,6 +558,7 @@ mod tests {
         assert_eq!(core.home_dir, home_dir().unwrap());
         assert_eq!(core.prev_dir, home_dir().unwrap());
         assert_eq!(core.storage.len(), 0);
+        assert_eq!(core.exit_code, 0);
         assert_eq!(core.alias.len(), 0);
         assert_eq!(core.functions.len(), 0);
         assert_eq!(core.dirs.len(), 1); //Contains home
@@ -520,14 +566,14 @@ mod tests {
         assert_eq!(core.history.len(), 0);
         assert_eq!(core.buf_in.len(), 0);
         //Test without working directory
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         assert_eq!(core.wrk_dir, core.home_dir);
     }
 
     #[test]
     fn test_core_alias() {
         //Instantiate Core
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Set alias
         core.set_alias(String::from("ll"), String::from("ls -l"));
         //Get alias
@@ -552,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_core_change_dir() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 128, Box::new(Bash {}));
         //Change directory
         assert!(core.change_directory(PathBuf::from("/var/")).is_ok());
         //Verify current directory/previous directory
@@ -576,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_core_dirs() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Dirs contains only home once the object is istantiated
         assert_eq!(core.dirs().len(), 1);
         assert_eq!(core.dirs()[0], core.home_dir.clone());
@@ -601,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_core_get_files() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //CD to tmp
         assert!(core.change_directory(PathBuf::from("/tmp/")).is_ok());
         //Create tmp files
@@ -622,7 +668,7 @@ mod tests {
 
     #[test]
     fn test_core_exit() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         core.exit();
         assert_eq!(core.state, ShellState::Terminated);
         assert_eq!(core.user.len(), 0);
@@ -635,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_core_functions() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Get unexisting function
         assert!(core.get_function(&String::from("testfunc")).is_none());
         //Create function
@@ -650,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_core_getters() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         assert_eq!(core.get_home(), core.home_dir.clone());
         assert_eq!(core.get_prev_dir(), core.home_dir.clone());
         assert_eq!(core.get_wrkdir(), core.wrk_dir.clone());
@@ -692,9 +738,80 @@ mod tests {
         assert_eq!(core.history_at(1).unwrap(), String::from("command 1"));
     }
     
-    //TODO: Misc
+    #[test]
+    fn test_core_misc_resolve_path() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        assert_eq!(core.resolve_path(String::from("/tmp/")), PathBuf::from("/tmp/"));
+        assert_eq!(core.resolve_path(String::from("~")), core.home_dir.clone());
+        let mut dev_home_path: PathBuf = core.home_dir.clone();
+        dev_home_path.push("develop/Rust/");
+        assert_eq!(core.resolve_path(String::from("~/develop/Rust/")), dev_home_path);
+    }
+
+    #[test]
+    fn test_core_misc_reverse_search() {
+        //Push some entries to the history
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 64, Box::new(Bash {}));
+        core.history_push(String::from("git status"));
+        core.history_push(String::from("git commit -a"));
+        core.history_push(String::from("git commit README.md"));
+        core.history_push(String::from("git push origin master"));
+        core.history_push(String::from("ll"));
+        core.history_push(String::from("cd /tmp/"));
+        core.history_push(String::from("mc -e test.cpp"));
+        core.history_push(String::from("g++ test.cpp -o test"));
+        core.history_push(String::from("./test"));
+        core.history_push(String::from("cd -"));
+        //Try the reverse search with hits
+        assert_eq!(core.reverse_search_hits(&String::from("git"), 0).unwrap(), String::from("git push origin master"));
+        assert_eq!(core.reverse_search_hits(&String::from("git"), 1).unwrap(), String::from("git commit README.md"));
+        assert_eq!(core.reverse_search_hits(&String::from("git"), 2).unwrap(), String::from("git commit -a"));
+        assert_eq!(core.reverse_search_hits(&String::from("git"), 3).unwrap(), String::from("git status"));
+        //Some other research with hits
+        assert_eq!(core.reverse_search_hits(&String::from("commit"), 1).unwrap(), String::from("git commit -a"));
+        //Try a research with hits out of range
+        assert!(core.reverse_search_hits(&String::from("commit"), 3).is_none());
+        //Try a research with hits of something unmatched
+        assert!(core.reverse_search_hits(&String::from("foobar"), 0).is_none());
+        //Try research with full stack
+        let matches: Vec<String> = core.reverse_search(&String::from("git"), None).unwrap();
+        assert_eq!(matches.len(), 4);
+        assert_eq!(matches[0], String::from("git push origin master"));
+        assert_eq!(matches[3], String::from("git status"));
+        //Try research with full stack and max entries
+        let matches: Vec<String> = core.reverse_search(&String::from("git"), Some(2)).unwrap();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0], String::from("git push origin master"));
+        assert_eq!(matches[1], String::from("git commit README.md"));
+        //Try research with full stack of something unmatched
+        assert!(core.reverse_search(&String::from("foobar"), None).is_none());
+    }
+
     //TODO: readline
-    //TODO: storage
+
+    #[test]
+    fn test_core_storage() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Try to get from storage a value which is not set
+        assert!(core.value_get(&String::from("FOO")).is_none());
+        assert!(core.storage_get(&String::from("FOO")).is_none());
+        //Set a value in the storage
+        core.storage_set(String::from("FOO"), String::from("BAR"));
+        //Verify value is in the storage
+        assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
+        //Unset value
+        core.value_unset(&String::from("FOO"));
+        assert!(core.value_get(&String::from("FOO")).is_none());
+        //Set value in the environ
+        core.environ_set(String::from("MYKEY"), String::from("305"));
+        assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("305"));
+        //Set a value in the storage with name MYKEY
+        core.storage_set(String::from("MYKEY"), String::from("SATURN"));
+        //Now MYKEY, if retrieved should be SATURN
+        assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("SATURN"));
+        //In environ the value should be still 305
+        assert_eq!(core.environ_get(&String::from("MYKEY")).unwrap(), String::from("305"));
+    }
 
     fn create_tmpfile() -> tempfile::NamedTempFile {
         tempfile::NamedTempFile::new().unwrap()
