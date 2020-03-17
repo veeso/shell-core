@@ -72,7 +72,7 @@ impl Task {
     /// ### reset_next
     /// 
     /// Remove the next Task from a certain task
-    pub fn reset_next(&mut self) {
+    pub(crate) fn reset_next(&mut self) {
         self.next = None;
         self.relation = TaskRelation::Unrelated;
     }
