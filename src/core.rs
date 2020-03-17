@@ -91,27 +91,27 @@ impl ShellCore {
 
     //@! Alias
 
-    /// ### get_all_alias
+    /// ### alias_get_all
     /// 
     /// Returns the aliases in the current shell environment
-    pub(crate) fn get_all_alias(&self) -> HashMap<String, String> {
+    pub(crate) fn alias_get_all(&self) -> HashMap<String, String> {
         self.alias.clone()
     }
 
-    /// ### get_alias
+    /// ### alias_get
     /// 
     /// Returns the alias associated command with the provided name
-    pub(crate) fn get_alias(&self, alias: &String) -> Option<String> {
+    pub(crate) fn alias_get(&self, alias: &String) -> Option<String> {
         match self.alias.get(alias) {
             None => None,
             Some(s) => Some(s.clone())
         }
     }
 
-    /// ### set_alias
+    /// ### alias_set
     /// 
     /// Set an alias in the current shell environment
-    pub(crate) fn set_alias(&mut self, alias: String, command: String) {
+    pub(crate) fn alias_set(&mut self, alias: String, command: String) {
         self.alias.insert(alias, command);
     }
 
@@ -227,20 +227,20 @@ impl ShellCore {
 
     //@! Functions
 
-    /// ### get_function
+    /// ### function_get
     /// 
     /// Returns a function from the current Shell Environment
-    pub(crate) fn get_function(&self, name: &String) -> Option<ShellExpression> {
+    pub(crate) fn function_get(&self, name: &String) -> Option<ShellExpression> {
         match self.functions.get(name) {
             None => None,
             Some(f) => Some(f.clone())
         }
     }
 
-    /// ### set_function
+    /// ### function_set
     /// 
     /// Set a new Shell Function
-    pub(crate) fn set_function(&mut self, name: String, expression: ShellExpression) {
+    pub(crate) fn function_set(&mut self, name: String, expression: ShellExpression) {
         self.functions.insert(name, expression);
     }
 
@@ -457,6 +457,38 @@ impl ShellCore {
         self.buf_in.clear();
     }
 
+    /// ### eval
+    /// 
+    /// Evaluate an expression
+    pub fn eval(&mut self, expression: ShellExpression) -> u8 {
+        //Instantiate runner
+        let mut runner: ShellRunner = ShellRunner::new();
+        //Eval
+        runner.run(&mut self, expression)
+    }
+
+    /// ### source
+    /// 
+    /// Source file
+    pub fn source(&mut self, file: PathBuf) -> Result<u8, ShellError> {
+        //Read file
+        let file_content: String = match std::fs::read_to_string(file.as_path()) {
+            Ok(cnt) => cnt,
+            Err(err) => match err.kind() {
+                ErrorKind::NotFound => return Err(ShellError::NoSuchFileOrDirectory),
+                ErrorKind::PermissionDenied => return Err(ShellError::PermissionDenied),
+                _ => return Err(ShellError::Other)
+            }
+        };
+        //Parse file
+        match self.parser.parse(&file_content) {
+            Ok(expression) => {
+                Ok(self.eval(expression))
+            },
+            Err(err) => Err(ShellError::Parser(err))
+        }
+    }
+
     //@! Storage
 
     /// ### value_get
@@ -575,25 +607,25 @@ mod tests {
         //Instantiate Core
         let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Set alias
-        core.set_alias(String::from("ll"), String::from("ls -l"));
+        core.alias_set(String::from("ll"), String::from("ls -l"));
         //Get alias
-        assert_eq!(core.get_alias(&String::from("ll")).unwrap(), String::from("ls -l"));
+        assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l"));
         //Try to get unexisting alias
-        assert!(core.get_alias(&String::from("foobar")).is_none());
+        assert!(core.alias_get(&String::from("foobar")).is_none());
         //Override alias
-        core.set_alias(String::from("ll"), String::from("ls -l --color=auto"));
-        assert_eq!(core.get_alias(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
+        core.alias_set(String::from("ll"), String::from("ls -l --color=auto"));
+        assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
         //Add another alias and test get all alias
-        core.set_alias(String::from("please"), String::from("sudo"));
-        let alias_table: HashMap<String, String> = core.get_all_alias();
+        core.alias_set(String::from("please"), String::from("sudo"));
+        let alias_table: HashMap<String, String> = core.alias_get_all();
         //Verify table
         assert_eq!(alias_table.len(), 2);
         //Test unalias
         assert!(core.unalias(&String::from("ll")).is_some());
         assert!(core.unalias(&String::from("please")).is_some());
         assert!(core.unalias(&String::from("foobar")).is_none());
-        assert!(core.get_alias(&String::from("ll")).is_none());
-        assert!(core.get_alias(&String::from("please")).is_none());
+        assert!(core.alias_get(&String::from("ll")).is_none());
+        assert!(core.alias_get(&String::from("please")).is_none());
     }
 
     #[test]
@@ -683,15 +715,15 @@ mod tests {
     fn test_core_functions() {
         let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Get unexisting function
-        assert!(core.get_function(&String::from("testfunc")).is_none());
+        assert!(core.function_get(&String::from("testfunc")).is_none());
         //Create function
         let test_function: ShellExpression = ShellExpression {
             statements: vec![ShellStatement::Return(0)]
         };
         //Set function
-        core.set_function(String::from("testfunc"), test_function);
+        core.function_set(String::from("testfunc"), test_function);
         //Verify function exists
-        assert!(core.get_function(&String::from("testfunc")).is_some());
+        assert!(core.function_get(&String::from("testfunc")).is_some());
     }
 
     #[test]
@@ -788,6 +820,8 @@ mod tests {
     }
 
     //TODO: readline
+    //TODO: eval
+    //TODO: source
 
     #[test]
     fn test_core_storage() {
