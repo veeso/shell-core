@@ -427,6 +427,9 @@ impl ShellCore {
                 self.execution_started = Instant::now();
                 //Run expression
                 let rc: u8 = runner.run(self, expression);
+                //Set rc to storage
+                self.storage_set(String::from("status"), rc.to_string());
+                self.storage_set(String::from("?"), rc.to_string());
                 self.execution_time = self.execution_started.elapsed();
                 //Set state back to Idle
                 self.state = ShellState::Idle;
@@ -464,7 +467,11 @@ impl ShellCore {
         //Instantiate runner
         let mut runner: ShellRunner = ShellRunner::new();
         //Eval
-        runner.run(&mut self, expression)
+        let rc: u8 = runner.run(&mut self, expression);
+        //Set rc to storage
+        self.storage_set(String::from("status"), rc.to_string());
+        self.storage_set(String::from("?"), rc.to_string());
+        rc
     }
 
     /// ### source
