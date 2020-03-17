@@ -69,6 +69,14 @@ impl Task {
         }
     }
 
+    /// ### reset_next
+    /// 
+    /// Remove the next Task from a certain task
+    pub fn reset_next(&mut self) {
+        self.next = None;
+        self.relation = TaskRelation::Unrelated;
+    }
+
     /// ## start
     ///
     /// Start process
@@ -320,6 +328,27 @@ mod tests {
         assert_eq!(task.stdout_redirection, Redirection::Stdout);
         assert_eq!(task.command[0], String::from("echo"));
         assert_eq!(task.command[1], String::from("foobar"));
+    }
+
+    #[test]
+    fn test_task_reset_next() {
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add pipe
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
+        assert_eq!(task.relation, TaskRelation::And);
+        //Verify next is something
+        assert!(task.next.is_some());
+        //Reset next
+        task.reset_next();
+        assert_eq!(task.relation, TaskRelation::Unrelated);
+        assert!(task.next.is_none());
     }
 
     #[test]
