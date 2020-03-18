@@ -124,7 +124,7 @@ pub struct ShellExpression {
 /// - Let: perform math operation to values Let(Result, operator1, operation, operator2)
 /// - Popd: Pop directory from stack
 /// - Pushd: Push directory to directory stack
-/// - Read: Read command (Prompt, length)
+/// - Read: Read command (Prompt, length, result_key)
 /// - Return: return value
 /// - Set: Set value into storage
 /// - Source: source file
@@ -150,7 +150,7 @@ pub enum ShellStatement {
     PopdBack,
     PopdFront,
     Pushd(PathBuf),
-    Read(Option<String>, Option<usize>),
+    Read(Option<String>, Option<usize>, Option<String>),
     Return(u8),
     Set(String, ShellExpression),
     Source(PathBuf),

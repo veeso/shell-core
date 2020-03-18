@@ -452,13 +452,19 @@ impl ShellRunner {
     /// ### read
     /// 
     /// Execute read statement, which means it waits for input until arrives; if the input has a maximum size, it gets cut to the maximum size
-    fn read(&mut self, core: &mut ShellCore, prompt: Option<String>, max_size: Option<usize>) -> String {
+    /// The data read is exported to result_key or to REPLY if not provided
+    fn read(&mut self, core: &mut ShellCore, prompt: Option<String>, max_size: Option<usize>, result_key: Option<String>) {
         let prompt: String = match prompt {
             Some(p) => p,
             None => String::new()
         };
         //Send prompt as output
         let _ = core.sstream.send(ShellStreamMessage::Output((Some(prompt), None)));
+        //Define the key name
+        let key: String = match result_key {
+            Some(k) => k,
+            None => String::from("REPLY")
+        };
         //Read
         loop {
             //Try to read from sstream
@@ -469,22 +475,30 @@ impl ShellRunner {
                         match message {
                             UserStreamMessage::Input(input) => { //If input return input or 
                                 match max_size {
-                                    None => return input.clone(),
-                                    Some(size) => return String::from(&input[..size])
+                                    None => {
+                                        //Export variable to storage
+                                        core.storage_set(key, input.clone());
+                                        return;
+                                    },
+                                    Some(size) => {
+                                        let value: String = String::from(&input[..size]);
+                                        core.storage_set(key, value);
+                                        return;
+                                    }
                                 }
                             },
-                            UserStreamMessage::Kill => return String::new(),
-                            UserStreamMessage::Signal(_) => return String::new(),
+                            UserStreamMessage::Kill => return,
+                            UserStreamMessage::Signal(_) => return,
                             UserStreamMessage::Interrupt => {
                                 self.exit_flag = Some(255);
-                                return String::new()
+                                return;
                             }
                         }
                     }
                 },
                 Err(_) => {
                     self.exit_flag = Some(255);
-                    return String::new()
+                    return;
                 }
             }
         }
@@ -677,7 +691,10 @@ mod tests {
 
     use super::*;
     use crate::parsers::bash::Bash;
+    use crate::ShellStatement;
     use crate::UserStream;
+
+    use std::mem::discriminant;
 
     #[test]
     fn test_runner_new() {
@@ -707,7 +724,81 @@ mod tests {
         assert!(runner.eval_value(&mut core, String::from("${KEYTEST3}")).matches("cp").count() > 0);
     }
 
-    //TODO: function test
-    //TODO: Task chain test
+    #[test]
+    fn test_runner_function() {
+        //Instantiate an expression
+        let statements: Vec<ShellStatement> = vec![ShellStatement::Exit(0)];
+        let expression: ShellExpression = ShellExpression {
+            statements: statements
+        };
+        //Instantiate function
+        let function: Function = Function::new(expression, Redirection::Stdout);
+        assert_eq!(function.redirection, Redirection::Stdout);
+        assert_eq!(function.expression.statements.len(), 1);
+        assert_eq!(discriminant(&function.expression.statements[0]), discriminant(&ShellStatement::Exit(0)));
+    }
+
+    #[test]
+    fn test_runner_chain() {
+        //Instantiate an expression
+        let statements: Vec<ShellStatement> = vec![ShellStatement::Exit(0)];
+        let expression: ShellExpression = ShellExpression {
+            statements: statements
+        };
+        //Instantiate function
+        let function: Function = Function::new(expression, Redirection::Stdout);
+        let mut chain: TaskChain = TaskChain::new(None, Some(function), TaskRelation::Unrelated);
+        //Verify constructor
+        assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
+        assert_eq!(chain.next_relation, TaskRelation::Unrelated);
+        assert!(chain.next.is_none());
+        assert!(chain.function.is_some());
+        assert!(chain.task.is_none());
+        //Prepare stuff to chain a new object
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("BAR"))]
+        };
+        let statements: Vec<ShellStatement> = vec![ShellStatement::Set(String::from("FOO"), expression)];
+        let expression: ShellExpression = ShellExpression {
+            statements: statements
+        };
+        let function: Function = Function::new(expression, Redirection::Stdout);
+        //Chain a new function
+        chain.chain(None, Some(function), TaskRelation::And);
+        assert_eq!(chain.next_relation, TaskRelation::And);
+        assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
+        assert!(chain.next.is_some());
+        //Verify next
+        let next: &TaskChain = chain.next.as_ref().unwrap();
+        assert!(next.function.is_some());
+        assert!(next.task.is_none());
+        assert_eq!(next.prev_relation, TaskRelation::And);
+        assert_eq!(next.next_relation, TaskRelation::Unrelated);
+        assert!(next.next.is_none());
+        //Prepare to chain a 3rd element
+        let statements: Vec<ShellStatement> = vec![ShellStatement::Read(None, None, None)];
+        let expression: ShellExpression = ShellExpression {
+            statements: statements
+        };
+        let function: Function = Function::new(expression, Redirection::Stdout);
+        //Chain a 3rd element
+        chain.chain(None, Some(function), TaskRelation::Or);
+        let next: &TaskChain = chain.next.as_ref().unwrap();
+        //Check if the relation between the 1st and the 2nd has been preserved
+        assert_eq!(chain.next_relation, TaskRelation::And);
+        assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
+        assert!(chain.next.is_some());
+        //Okay, now verify the relation between the 2nd and the 3rd
+        assert_eq!(next.prev_relation, TaskRelation::And);
+        assert_eq!(next.next_relation, TaskRelation::Or); //NOTE: this was Unrelated before
+        assert!(next.next.is_some()); //Now is some
+        let next: &TaskChain = next.next.as_ref().unwrap();
+        //Verify 3rd block
+        assert!(next.function.is_some());
+        assert!(next.task.is_none());
+        assert_eq!(next.prev_relation, TaskRelation::Or);
+        assert_eq!(next.next_relation, TaskRelation::Unrelated);
+        assert!(next.next.is_none());
+    }
 
 }
