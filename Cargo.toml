@@ -1,13 +1,13 @@
 [package]
 name = "shell-core"
 version = "0.1.0"
-authors = ["ChristianVisintin <christian.visintin1997@gmail.com>"]
+authors = ["Christian Visintin <christian.visintin1997@gmail.com>"]
 edition = "2018"
 license = "MIT"
 categories = ["command-line-utilities", "shell", "shell-utilities"]
 homepage = "https://github.com/ChristianVisintin/shell-core"
 repository = "https://github.com/ChristianVisintin/shell-core"
-description = "Shell core is a library which provides the core functionality to implement a shell or to interface with one of them."
+description = "Shell core is a library which provides the core functionalities to implement a shell."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,6 +16,7 @@ nix = "0.17.0"
 subprocess = "0.2.4"
 whoami = "0.8.1"
 dirs = "2.0.2"
+glob = "0.3.0"
 
 [dev-dependencies]
 tempfile = "3"

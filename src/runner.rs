@@ -26,13 +26,16 @@
 // SOFTWARE.
 //
 
+extern crate glob;
+
 use crate::{FileRedirectionType, Redirection, ShellCore, ShellError, ShellExpression, ShellRunner, ShellStream, ShellStreamMessage, TaskManager, Task, UserStreamMessage};
 use crate::tasks::{TaskError, TaskErrorCode, TaskMessageRx, TaskMessageTx, TaskRelation};
 
+use glob::glob;
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::thread::sleep;
 
@@ -515,19 +518,50 @@ impl ShellRunner {
     /// 
     /// Evaluate value
     fn eval_value(&self, core: &mut ShellCore, value: String) -> String {
-        //TODO: wildcards (*, ?)
-        //TODO: replace starts with with regex ${}
-        if value.starts_with("$") {
+        //Treat variables
+        let mut outval: String = value.clone();
+        if value.starts_with("${") {
             //Get value from core
-            let value: String = String::from(&value[1..]);
-            let value: String = match core.value_get(&value) {
+            let last_pos_index: usize = value.len() - 1;
+            let value: String = String::from(&value[2..last_pos_index]);
+            outval = match core.value_get(&value) {
                 Some(val) => val,
                 None => String::from("")
             };
-            value
+        } else if value.starts_with("$") {
+            //Get value from core
+            let value: String = String::from(&value[1..]);
+            outval = match core.value_get(&value) {
+                Some(val) => val,
+                None => String::from("")
+            };
+        }
+        //Once out of variable control, let's look for wildcards
+        if (outval.matches("*").count() > 0 && outval.matches("*").count() != outval.matches("\\*").count()) || (outval.matches("?").count() > 0 && outval.matches("?").count() != outval.matches("\\?").count()) {
+            //Resolve wildcards, we expect value to be a path. In case of wild cards, value is a string with matched files separated by whitespace
+            let path: &Path = Path::new(outval.as_str());
+            //If path is relative, get absolute path
+            let abs_path: PathBuf = match path.is_relative() {
+                true => {
+                    let mut abs_path: PathBuf = core.get_wrkdir();
+                    abs_path.push(path);
+                    abs_path
+                },
+                false => PathBuf::from(path)
+            };
+            //Get files in path
+            let mut result: String = String::new();
+            if let Ok(records) = glob(abs_path.to_str().unwrap()) {
+                for entry in records {
+                    if let Ok(path) = entry {
+                        result.push_str(format!("{} ", path.display()).as_str());
+                    }
+                }
+            }
+            result
         } else {
             //Else return value
-            value
+            outval
         }
     }
 
@@ -642,6 +676,36 @@ impl Function {
 mod tests {
 
     use super::*;
+    use crate::parsers::bash::Bash;
+    use crate::UserStream;
+
+    #[test]
+    fn test_runner_new() {
+        let runner: ShellRunner = ShellRunner::new();
+        assert!(runner.buffer.is_none());
+        assert!(runner.exit_flag.is_none());
+    }
+
+    #[test]
+    fn test_runner_eval_values() {
+        let runner: ShellRunner = ShellRunner::new();
+        //Instantiate cores
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/bin/")), 128, Box::new(Bash {}));
+        //Set test values into storage
+        core.storage_set(String::from("KEYTEST1"), String::from("BAR"));
+        core.storage_set(String::from("KEYTEST2"), String::from("/*"));
+        core.storage_set(String::from("KEYTEST3"), String::from("./*"));
+        //Evaluate values
+        assert_eq!(runner.eval_value(&mut core, String::from("$NOKEY")), String::from(""));
+        assert_eq!(runner.eval_value(&mut core, String::from("${NOKEY}")), String::from(""));
+        assert_eq!(runner.eval_value(&mut core, String::from("$KEYTEST1")), String::from("BAR"));
+        assert_eq!(runner.eval_value(&mut core, String::from("${KEYTEST1}")), String::from("BAR"));
+        assert_ne!(runner.eval_value(&mut core, String::from("${KEYTEST2}")), String::from("/*"));
+        assert!(runner.eval_value(&mut core, String::from("${KEYTEST2}")).matches("/bin").count() > 0);
+        assert_ne!(runner.eval_value(&mut core, String::from("${KEYTEST3}")), String::from("./*"));
+        assert_ne!(runner.eval_value(&mut core, String::from("${KEYTEST3}")), String::from(""));
+        assert!(runner.eval_value(&mut core, String::from("${KEYTEST3}")).matches("cp").count() > 0);
+    }
 
     //TODO: function test
     //TODO: Task chain test
