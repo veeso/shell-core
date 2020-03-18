@@ -62,7 +62,7 @@ pub struct ShellCore {
     history: VecDeque<String>,                      //Shell history
     parser: Box<dyn ParseStatement>,                //Parser
     buf_in: String,                                 //Input buffer
-    sstream: ShellStream                            //ShellStream
+    pub(crate) sstream: ShellStream                 //ShellStream
 }
 
 /// ## ShellState
@@ -90,6 +90,7 @@ pub enum ShellError {
     NoSuchFileOrDirectory,
     NotADirectory,
     PermissionDenied,
+    OutOfHistoryRange,      //Out of History Range
     ShellNotInIdle,         //The shell must be in Idle state to perform this action
     TaskError(TaskError),   //Error reported by task; please refer to task error
     Parser(ParserError),    //Error reported by the Parser
@@ -111,6 +112,7 @@ pub struct ShellExpression {
 /// The Statements are:
 /// - Alias: Association between name and command
 /// - Break: Break from current expression block if possible
+/// - Case: case statement Case(Expression output to match, List of case => expression)
 /// - Cd: change directory
 /// - Continue: Continue in the current expression block if possible
 /// - Exec: Perform Task
@@ -127,37 +129,40 @@ pub struct ShellExpression {
 /// - Source: source file
 /// - Task: execute task
 /// - Time: execute with time
+/// - Value: simple value or key
 /// - While: While(Condition, Perform) iterator
 #[derive(Clone, std::fmt::Debug)]
 pub enum ShellStatement {
     Alias(String, String),
     Break,
+    Case(ShellExpression, Vec<(ShellExpression, ShellExpression)>),
     Cd(PathBuf),
     Continue,
     Dirs,
     Exec(Task),
     ExecHistory(usize),
     Exit(u8),
-    Export(String, String),
-    For(Task, Vec<ShellStatement>),
-    If(Task, Vec<ShellStatement>, Option<Vec<ShellStatement>>),
-    Set(String, String),
+    Export(String, ShellExpression),
+    For(ShellExpression, ShellExpression),
+    If(ShellExpression, ShellExpression, Option<ShellExpression>),
+    Set(String, ShellExpression),
     PopdBack,
     PopdFront,
     Pushd(PathBuf),
-    Read(Option<String>, usize),
+    Read(Option<String>, Option<usize>),
     Return(u8),
     Source(PathBuf),
     Time(Task),
-    While(Task, Vec<ShellStatement>)
+    Value(String),
+    While(Task, ShellExpression)
 }
 
 /// ## ShellRunner
 /// 
 /// The shell runner is the struct which takes care of running Shell Expressions
 pub struct ShellRunner {
-    task_manager: Option<TaskManager>,  //Task Manager
-    buffer: String                      //Input buffer
+    buffer: Option<String>, //Input buffer
+    exit_flag: Option<u8>   //When active, exit from expression execution
 }
 
 //@! Streams
@@ -184,7 +189,9 @@ pub struct UserStream {
 /// The shell stream message contains the messages which can be sent by the ShellCore to the "user"
 pub enum ShellStreamMessage {
     Output((Option<String>, Option<String>)),   //Shell Output (stdout, stderr)
-    Error(ShellError)                           //Shell Error
+    Error(ShellError),                          //Shell Error
+    Dirs(Vec<PathBuf>),                         //Dirs output
+    Time(Duration)                              //Command duration
 }
 
 /// ## UserStreamMessage
@@ -192,9 +199,9 @@ pub enum ShellStreamMessage {
 /// The User stream message contains the messages which can be sent by the "user" to the ShellCore during the execution
 pub enum UserStreamMessage {
     Input(String),          //Stdin
-    Kill,                   //Kill
-    Signal(UnixSignal),     //Signal
-    Terminate               //Terminate shell runner execution
+    Kill,                   //Kill NOTE: the kill is forwarded to the task
+    Signal(UnixSignal),     //Signal NOTE: the signal is forwarded to the task
+    Interrupt               //Interrupt shell runner execution. This interrupts the process too
 }
 
 //@! Redirection

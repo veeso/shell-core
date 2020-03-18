@@ -467,7 +467,7 @@ impl ShellCore {
         //Instantiate runner
         let mut runner: ShellRunner = ShellRunner::new();
         //Eval
-        let rc: u8 = runner.run(&mut self, expression);
+        let rc: u8 = runner.run(self, expression);
         //Set rc to storage
         self.storage_set(String::from("status"), rc.to_string());
         self.storage_set(String::from("?"), rc.to_string());
