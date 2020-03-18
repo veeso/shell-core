@@ -70,9 +70,9 @@ pub struct TaskError {
 pub struct Task {
     pub(crate) command: Vec<String>,        //Command argv
     process: Option<Process>,               //Current process in task
-    stdout_redirection: Redirection,        //Stdout Redirection type
-    stderr_redirection: Redirection,        //Stderr Redirection type
-    relation: TaskRelation,                 //Task Relation with the next one
+    pub(crate) stdout_redirection: Redirection,        //Stdout Redirection type
+    pub(crate) stderr_redirection: Redirection,        //Stderr Redirection type
+    pub(crate) relation: TaskRelation,                 //Task Relation with the next one
     pub(crate) next: Option<Box<Task>>,     //Next process in task
     exit_code: Option<u8>,                  //Task exit code
 }
@@ -109,9 +109,10 @@ pub enum TaskRelation {
 /// 
 /// Messages to be sent from shell to Task
 pub(crate) enum TaskMessageTx {
-    Input(String), //Send Input
-    Kill, //Kill process
-    Signal(crate::UnixSignal) //Send signal
+    Input(String),              //Send Input
+    Kill,                       //Kill process
+    Signal(crate::UnixSignal),  //Send signal
+    Terminate                   //Terminate task manager thread
 }
 
 /// ## TaskMessageRx
@@ -132,5 +133,13 @@ impl TaskError {
             code: code,
             message: message,
         }
+    }
+}
+
+//@! Traits implementation
+
+impl Clone for TaskError {
+    fn clone(&self) -> TaskError {
+        TaskError::new(self.code, self.message.clone())
     }
 }

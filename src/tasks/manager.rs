@@ -158,7 +158,13 @@ impl TaskManager {
             }
         }
         let mut last_exit_code: u8 = 255;
+        let mut terminate_called: bool = false;
+        //Iterate over all tasks
         loop {
+            if terminate_called {
+                last_exit_code = 130;
+                break;
+            }
             //Always try to read before handling process running state
             match task.read() {
                 Ok((stdout, stderr)) => {
@@ -223,6 +229,14 @@ impl TaskManager {
                                             return 255 //The other end hung up, so  terminate the thread
                                         }
                                     }
+                                },
+                                TaskMessageTx::Terminate => {
+                                    //Kill task
+                                    let _ = task.kill();
+                                    //Set terminate called to true
+                                    terminate_called = true;
+                                    //Break
+                                    break;
                                 }
                             }
                         },
@@ -946,6 +960,35 @@ mod tests {
         assert!(!manager.is_running());
         let rc: u8 = manager.join().unwrap();
         assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_manager_terminate() {
+        //Build pipeline
+        let command: Vec<String> = vec![String::from("cat")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or,
+        );
+        //Instantiate task manager
+        let mut manager: TaskManager = TaskManager::new(sample_task);
+        //Start
+        assert!(manager.start().is_ok());
+        //Wait for output messages
+        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
+        //Wait 500ms
+        sleep(Duration::from_millis(200));
+        //Terminate task manager
+        assert!(manager.send_message(TaskMessageTx::Terminate).is_ok());
+        sleep(Duration::from_millis(300));
+        //Verify exit code
+        assert!(!manager.is_running());
+        let rc: u8 = manager.join().unwrap();
+        assert_eq!(rc, 130);
     }
 
     #[test]
