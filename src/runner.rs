@@ -277,7 +277,7 @@ impl ShellRunner {
     }
 
     /// ### Resolve tasks commands building
-    fn chain_task(&self, core: &ShellCore, mut head: Task) -> TaskChain {
+    fn chain_task(&self, core: &mut ShellCore, mut head: Task) -> TaskChain {
         let mut chain: Option<TaskChain> = None;
         let mut previous_was_function: bool = false;
         //Iterate over tasks
@@ -297,6 +297,13 @@ impl ShellRunner {
                 }
                 command = argv[0].clone();
             }
+            //Evaluate values
+            for arg in argv[1..].iter_mut() {
+                //Resolve value
+                *arg = self.eval_value(core, arg.to_string());
+            }
+            //Push argv to task
+            head.command = argv;
             //Check if first element is a function
             if let Some(func) = core.function_get(&command) {
                 //If it's a function chain a function
@@ -380,17 +387,43 @@ impl ShellRunner {
         core.environ_set(key, value);
     }
 
-    //TODO: for (requires exec)
-
-    //TODO: if (requires exec)
-
-    /// ### set
+    /// ### foreach
     /// 
-    /// Set a key with its associated value in the Shell session storage
-    fn set(&mut self, core: &mut ShellCore, key: String, value: ShellExpression) {
-        let (_, value): (u8, String) = self.run_expression(core, value);
-        core.storage_set(key, value);
+    /// Perform a for statement
+    fn foreach(&mut self, core: &mut ShellCore, key: String, condition: ShellExpression, expression: ShellExpression) {
+        //Get result of condition
+        let (rc, output): (u8, String) = self.run_expression(core, condition);
+        if rc != 0 {
+            return;
+        }
+        //Iterate over output split by whitespace
+        for i in output.split_whitespace() {
+            //Export key to storage
+            core.storage_set(key.clone(), i.to_string());
+            //Execute expression
+            let _ = self.run_expression(core, expression.clone());
+        }
+        //Remove key from storage
+        core.value_unset(&key);
     }
+
+    /// ### ifcond
+    /// 
+    /// Perform if statement
+    fn ifcond(&mut self, core: &mut ShellCore, condition: ShellExpression, if_perform: ShellExpression, else_perform: Option<ShellExpression>) {
+        //Get result of condition
+        let (rc, _): (u8, String) = self.run_expression(core, condition);
+        //If rc is 0 => execute if perform
+        if rc == 0 {
+            //Execute expression
+            let _ = self.run_expression(core, if_perform);
+        } else if let Some(else_perform) = else_perform {
+            //Perform else if set
+            let _ = self.run_expression(core, else_perform);
+        }
+    }
+
+    //TODO: let statement
 
     /// ### popd_back
     /// 
@@ -454,6 +487,14 @@ impl ShellRunner {
         }
     }
 
+    /// ### set
+    /// 
+    /// Set a key with its associated value in the Shell session storage
+    fn set(&mut self, core: &mut ShellCore, key: String, value: ShellExpression) {
+        let (_, value): (u8, String) = self.run_expression(core, value);
+        core.storage_set(key, value);
+    }
+
     /// ### source
     /// 
     /// Source file
@@ -474,6 +515,8 @@ impl ShellRunner {
     /// 
     /// Evaluate value
     fn eval_value(&self, core: &mut ShellCore, value: String) -> String {
+        //TODO: wildcards (*, ?)
+        //TODO: replace starts with with regex ${}
         if value.starts_with("$") {
             //Get value from core
             let value: String = String::from(&value[1..]);
@@ -488,7 +531,19 @@ impl ShellRunner {
         }
     }
 
-    //TODO: while
+    /// ### while_loop
+    /// 
+    /// Perform While shell statement
+    fn while_loop(&mut self, core: &mut ShellCore, condition: ShellExpression, expression: ShellExpression) {
+        loop {
+            let (rc, _): (u8, String) = self.run_expression(core, condition.clone());
+            if rc != 0 { //If rc is NOT 0, break
+                break;
+            }
+            //Otherwise perform expression
+            let _ = self.run_expression(core, expression.clone());
+        }
+    }
 
     /// ### get_expression_str_value
     /// 
@@ -535,7 +590,6 @@ impl ShellRunner {
         }
         Ok(())
     }
-
 }
 
 impl TaskChain {
