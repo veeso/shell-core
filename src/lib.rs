@@ -119,8 +119,9 @@ pub struct ShellExpression {
 /// - ExecHistory: Perform command from history
 /// - Exit: exit from expression
 /// - Export: export a variable into environ
-/// - For: For(Condition, Perform) iterator
+/// - For: For(String, Condition, Perform) iterator String: key name
 /// - If: If(Condition, Then, Else) condition
+/// - Let: perform math operation to values Let(Result, operator1, operation, operator2)
 /// - Popd: Pop directory from stack
 /// - Pushd: Push directory to directory stack
 /// - Read: Read command (Prompt, length)
@@ -143,18 +144,31 @@ pub enum ShellStatement {
     ExecHistory(usize),
     Exit(u8),
     Export(String, ShellExpression),
-    For(ShellExpression, ShellExpression),
+    For(String, ShellExpression, ShellExpression),
     If(ShellExpression, ShellExpression, Option<ShellExpression>),
-    Set(String, ShellExpression),
+    Let(String, String, MathOperator, String),
     PopdBack,
     PopdFront,
     Pushd(PathBuf),
     Read(Option<String>, Option<usize>),
     Return(u8),
+    Set(String, ShellExpression),
     Source(PathBuf),
     Time(Task),
     Value(String),
-    While(Task, ShellExpression)
+    While(ShellExpression, ShellExpression)
+}
+
+/// ## MathOperator
+/// 
+/// Math operator is used by Let statement
+#[derive(Clone, std::fmt::Debug)]
+pub enum MathOperator {
+    Divide,
+    Module,
+    Multiply,
+    Subtract,
+    Sum
 }
 
 /// ## ShellRunner
