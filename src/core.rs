@@ -207,8 +207,15 @@ impl ShellCore {
     /// 
     /// Returns all the files in the current directory
     pub fn get_files(&self) -> Result<Vec<DirEntry>, ShellError> {
+        self.get_files_in(self.wrk_dir.clone())
+    }
+
+    /// ### get_files
+    /// 
+    /// Returns all the files in the provided directory
+    pub fn get_files_in(&self, path: PathBuf) -> Result<Vec<DirEntry>, ShellError> {
         let mut files: Vec<DirEntry> = Vec::new();
-        let entries = match read_dir(self.wrk_dir.as_path()) {
+        let entries = match read_dir(path.as_path()) {
             Ok(e) => e,
             Err(err) => return match err.kind() {
                 ErrorKind::PermissionDenied => Err(ShellError::PermissionDenied),
