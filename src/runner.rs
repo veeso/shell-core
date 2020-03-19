@@ -745,6 +745,7 @@ mod tests {
     use crate::parsers::bash::Bash;
     use crate::ShellStatement;
     use crate::UserStream;
+    use crate::UnixSignal;
 
     use std::mem::discriminant;
     use std::mem::drop;
@@ -845,9 +846,11 @@ mod tests {
         let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //TODO: implement (requires run_expression)
     }
+    
     //TODO: foreach
     //TODO: ifcond
     //TODO: let
+
     #[test]
     fn test_runner_dirs() {
         let mut runner: ShellRunner = ShellRunner::new();
@@ -889,7 +892,50 @@ mod tests {
         }
     }
 
-    //TODO: read
+    #[test]
+    fn test_runner_read() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Send input before read, otherwise will block
+        assert!(ustream.send(UserStreamMessage::Input(String::from("HI_THERE"))));
+        //Read
+        runner.read(&mut core, Some(String::from("type something")), Some(5), Some(String::from("OUTPUT")));
+        //Prompt is shown
+        if let ShellStreamMessage::Output((stdout, stderr)) = &ustream.receive().unwrap()[0] {
+            //Must be prompt
+            assert_eq!(*stdout.as_ref().unwrap(), String::from("type something"));
+        } else {
+            panic!("Not an output");
+        }
+        //Get output
+        assert_eq!(core.value_get(&String::from("OUTPUT")).unwrap(), String::from("HI_TH")); //Max size is 5, do you remember?
+        //Let's try without option now
+        assert!(ustream.send(UserStreamMessage::Input(String::from("HI_THERE"))));
+        runner.read(&mut core, None, None, None);
+        //Prompt is shown
+        if let ShellStreamMessage::Output((stdout, stderr)) = &ustream.receive().unwrap()[0] {
+            //Must be prompt
+            assert_eq!(*stdout.as_ref().unwrap(), String::from(""));
+        } else {
+            panic!("Not an output");
+        }
+        assert_eq!(core.value_get(&String::from("REPLY")).unwrap(), String::from("HI_THERE")); //This time will be stored in reply
+        //Let's try terminate, kill and other stuff
+        core.value_unset(&String::from("REPLY"));
+        assert!(ustream.send(UserStreamMessage::Kill));
+        runner.read(&mut core, None, None, None);
+        //Nothing to display
+        assert!(core.value_get(&String::from("REPLY")).is_none());
+        assert!(ustream.send(UserStreamMessage::Interrupt));
+        runner.read(&mut core, None, None, None);
+        //Nothing to display
+        assert!(core.value_get(&String::from("REPLY")).is_none());
+        assert!(ustream.send(UserStreamMessage::Signal(UnixSignal::Sigint)));
+        runner.read(&mut core, None, None, None);
+        //Nothing to display
+        assert!(core.value_get(&String::from("REPLY")).is_none());
+    }
+
     //TODO: set
     //TODO: source
     //TODO: while

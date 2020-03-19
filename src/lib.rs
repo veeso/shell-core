@@ -147,7 +147,7 @@ pub enum ShellStatement {
     Export(String, ShellExpression),
     For(String, ShellExpression, ShellExpression),
     If(ShellExpression, ShellExpression, Option<ShellExpression>),
-    Let(String, String, MathOperator, String),
+    Let(String, ShellExpression, MathOperator, ShellExpression),
     PopdBack,
     PopdFront,
     Pushd(PathBuf),
