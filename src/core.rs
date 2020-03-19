@@ -136,9 +136,9 @@ impl ShellCore {
                 Ok(())
             },
             Err(err) => match err.kind() {
-                ErrorKind::PermissionDenied => Err(ShellError::PermissionDenied),
-                ErrorKind::Other => Err(ShellError::NotADirectory),
-                ErrorKind::NotFound => Err(ShellError::NoSuchFileOrDirectory),
+                ErrorKind::PermissionDenied => Err(ShellError::PermissionDenied(directory.clone())),
+                ErrorKind::Other => Err(ShellError::NotADirectory(directory.clone())),
+                ErrorKind::NotFound => Err(ShellError::NoSuchFileOrDirectory(directory.clone())),
                 _ => Err(ShellError::Other)
             }
         }
@@ -218,9 +218,9 @@ impl ShellCore {
         let entries = match read_dir(path.as_path()) {
             Ok(e) => e,
             Err(err) => return match err.kind() {
-                ErrorKind::PermissionDenied => Err(ShellError::PermissionDenied),
-                ErrorKind::Other => Err(ShellError::NotADirectory),
-                ErrorKind::NotFound => Err(ShellError::NoSuchFileOrDirectory),
+                ErrorKind::PermissionDenied => Err(ShellError::PermissionDenied(path.clone())),
+                ErrorKind::Other => Err(ShellError::NotADirectory(path.clone())),
+                ErrorKind::NotFound => Err(ShellError::NoSuchFileOrDirectory(path.clone())),
                 _ => Err(ShellError::Other)
             }
         };
@@ -489,8 +489,8 @@ impl ShellCore {
         let file_content: String = match std::fs::read_to_string(file.as_path()) {
             Ok(cnt) => cnt,
             Err(err) => match err.kind() {
-                ErrorKind::NotFound => return Err(ShellError::NoSuchFileOrDirectory),
-                ErrorKind::PermissionDenied => return Err(ShellError::PermissionDenied),
+                ErrorKind::NotFound => return Err(ShellError::NoSuchFileOrDirectory(file.clone())),
+                ErrorKind::PermissionDenied => return Err(ShellError::PermissionDenied(file.clone())),
                 _ => return Err(ShellError::Other)
             }
         };
@@ -651,19 +651,19 @@ mod tests {
         assert_eq!(core.get_wrkdir(), PathBuf::from("/var/"));
         assert_eq!(core.get_prev_dir(), PathBuf::from("/tmp/"));
         //Change directory to unexisting directory
-        assert_eq!(core.change_directory(PathBuf::from("/pippoland/")).err().unwrap(), ShellError::NoSuchFileOrDirectory);
+        assert_eq!(core.change_directory(PathBuf::from("/pippoland/")).err().unwrap(), ShellError::NoSuchFileOrDirectory(PathBuf::from("/pippoland/")));
         //Verify directories didn't change
         assert_eq!(core.get_wrkdir(), PathBuf::from("/var/"));
         assert_eq!(core.get_prev_dir(), PathBuf::from("/tmp/"));
         //Try to change directory to file
         let tmpfile: tempfile::NamedTempFile = create_tmpfile();
-        assert_eq!(core.change_directory(PathBuf::from(tmpfile.path())).err().unwrap(), ShellError::NotADirectory);
+        assert_eq!(core.change_directory(PathBuf::from(tmpfile.path())).err().unwrap(), ShellError::NotADirectory(PathBuf::from(tmpfile.path())));
         //Try to change directory to a directory where you can't enter
         let tmpdir: tempfile::TempDir = create_tmpdir();
         //Use chmod instead of set_mode because it just doesn't work...
         assert!(Command::new("chmod").args(&["000", tmpdir.path().to_str().unwrap()]).status().is_ok());
         //Okay, now try to change directory inside that directory
-        assert_eq!(core.change_directory(PathBuf::from(tmpdir.path())).err().unwrap(), ShellError::PermissionDenied);
+        assert_eq!(core.change_directory(PathBuf::from(tmpdir.path())).err().unwrap(), ShellError::PermissionDenied(PathBuf::from(tmpdir.path())));
     }
 
     #[test]

@@ -87,14 +87,15 @@ pub enum ShellState {
 /// The Shell Error represents an error raised by the Shell
 #[derive(PartialEq, std::fmt::Debug)]
 pub enum ShellError {
-    NoSuchFileOrDirectory,
-    NotADirectory,
-    PermissionDenied,
-    OutOfHistoryRange,      //Out of History Range
-    ShellNotInIdle,         //The shell must be in Idle state to perform this action
-    TaskError(TaskError),   //Error reported by task; please refer to task error
-    Parser(ParserError),    //Error reported by the Parser
-    Other                   //Anything which is an undefined behaviour. This should never be raised
+    NoSuchFileOrDirectory(PathBuf),
+    NotADirectory(PathBuf),
+    PermissionDenied(PathBuf),
+    OutOfHistoryRange,          //Out of History Range
+    ShellNotInIdle,             //The shell must be in Idle state to perform this action
+    NoSuchAlias(String),        //Alias doesn't exist
+    TaskError(TaskError),       //Error reported by task; please refer to task error
+    Parser(ParserError),        //Error reported by the Parser
+    Other                       //Anything which is an undefined behaviour. This should never be raised
 }
 
 /// ## ShellFunction
@@ -110,7 +111,7 @@ pub struct ShellExpression {
 /// The shell statement represents a single statement for Shell
 /// Tasks are pipelines
 /// The Statements are:
-/// - Alias: Association between name and command
+/// - Alias: Association between name and command. Alias(None, None) => returns all aliases; Alias(Some, None) => returns alias command, Alias(Some, Some) => set alias
 /// - Break: Break from current expression block if possible
 /// - Case: case statement Case(Expression output to match, List of case => expression)
 /// - Cd: change directory
@@ -134,7 +135,7 @@ pub struct ShellExpression {
 /// - While: While(Condition, Perform) iterator
 #[derive(Clone, std::fmt::Debug)]
 pub enum ShellStatement {
-    Alias(String, String),
+    Alias(Option<String>, Option<String>),
     Break,
     Case(ShellExpression, Vec<(ShellExpression, ShellExpression)>),
     Cd(PathBuf),
@@ -204,7 +205,8 @@ pub struct UserStream {
 pub enum ShellStreamMessage {
     Output((Option<String>, Option<String>)),   //Shell Output (stdout, stderr)
     Error(ShellError),                          //Shell Error
-    Dirs(Vec<PathBuf>),                         //Dirs output
+    Dirs(VecDeque<PathBuf>),                    //Dirs output
+    Alias(Vec<(String, String)>),               //List of alias
     Time(Duration)                              //Command duration
 }
 
