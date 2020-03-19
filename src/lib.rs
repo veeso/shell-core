@@ -206,7 +206,7 @@ pub enum ShellStreamMessage {
     Output((Option<String>, Option<String>)),   //Shell Output (stdout, stderr)
     Error(ShellError),                          //Shell Error
     Dirs(VecDeque<PathBuf>),                    //Dirs output
-    Alias(Vec<(String, String)>),               //List of alias
+    Alias(HashMap<String, String>),             //List of alias
     Time(Duration)                              //Command duration
 }
 

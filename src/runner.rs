@@ -32,7 +32,7 @@ use crate::{FileRedirectionType, Redirection, ShellCore, ShellError, ShellExpres
 use crate::tasks::{TaskError, TaskErrorCode, TaskMessageRx, TaskMessageTx, TaskRelation};
 
 use glob::glob;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -90,8 +90,35 @@ impl ShellRunner {
     /// ### alias
     /// 
     /// Execute alias statement
-    fn alias(&self, core: &mut ShellCore, name: String, command: String) {
-        core.alias_set(name, command);
+    fn alias(&mut self, core: &mut ShellCore, name: Option<String>, command: Option<String>) {
+        if name.is_some() && command.is_some() {
+            core.alias_set(name.unwrap(), command.unwrap());
+        } else if name.is_some() && command.is_none() {
+            //Send alias value
+            match core.alias_get(name.as_ref().unwrap()) {
+                Some(cmd) => {
+                    let mut alias_list: HashMap<String, String> = HashMap::new();
+                    alias_list.insert(name.unwrap().clone(), cmd);
+                    //Send alias list
+                    if ! core.sstream.send(ShellStreamMessage::Alias(alias_list)) {
+                        self.exit_flag = Some(255);
+                    }
+                },
+                None => {
+                    //Send err alias
+                    if ! core.sstream.send(ShellStreamMessage::Error(ShellError::NoSuchAlias(name.unwrap().clone()))) {
+                        self.exit_flag = Some(255);
+                    }
+                }
+            }
+        } else if name.is_none() && command.is_none() {
+            //Return all alias
+            let alias_list: HashMap<String, String> = core.alias_get_all();
+            //Send alias list
+            if ! core.sstream.send(ShellStreamMessage::Alias(alias_list)) {
+                self.exit_flag = Some(255);
+            }
+        }
     }
 
     /// ### change_directory
@@ -103,9 +130,10 @@ impl ShellRunner {
 
     /// ### dirs
     /// 
-    /// Returns the directories in the core stack
-    fn dirs(&self, core: &mut ShellCore) -> VecDeque<PathBuf> {
-        core.dirs()
+    /// Sends the directories in the core stack
+    fn dirs(&self, core: &mut ShellCore) {
+        let dirs: VecDeque<PathBuf> = core.dirs();
+        core.sstream.send(ShellStreamMessage::Dirs(dirs));
     }
 
     /// ### exec
@@ -695,6 +723,7 @@ mod tests {
     use crate::UserStream;
 
     use std::mem::discriminant;
+    use std::mem::drop;
 
     #[test]
     fn test_runner_new() {
@@ -702,6 +731,57 @@ mod tests {
         assert!(runner.buffer.is_none());
         assert!(runner.exit_flag.is_none());
     }
+
+    #[test]
+    fn test_runner_alias() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/bin/")), 128, Box::new(Bash {}));
+        //Verify alias doesn't exist
+        assert!(core.alias_get(&String::from("ll")).is_none());
+        //Set alias
+        runner.alias(&mut core, Some(String::from("ll")), Some(String::from("ls -l")));
+        assert!(core.alias_get(&String::from("ll")).is_some());
+        //Let's get that alias
+        runner.alias(&mut core, Some(String::from("ll")), None);
+        //We should have received the alias in the ustream
+        if let ShellStreamMessage::Alias(alias) = &ustream.receive().unwrap()[0] {
+            assert_eq!(*alias.get(&String::from("ll")).unwrap(), String::from("ls -l"));
+        } else {
+            panic!("Not an Alias");
+        }
+        //Let's get an alias which doesn't exist
+        runner.alias(&mut core, Some(String::from("foobar")), None);
+        if let ShellStreamMessage::Error(err) = &ustream.receive().unwrap()[0] {
+            assert_eq!(discriminant(err), discriminant(&ShellError::NoSuchAlias(String::from("foobar"))));
+        } else {
+            panic!("Not an error");
+        }
+        //Let's insert another alias
+        runner.alias(&mut core, Some(String::from("dirsize")), Some(String::from("du -hs")));
+        //Let's get all aliases
+        runner.alias(&mut core, None, None);
+        if let ShellStreamMessage::Alias(alias) = &ustream.receive().unwrap()[0] {
+            assert_eq!(*alias.get(&String::from("ll")).unwrap(), String::from("ls -l"));
+            assert_eq!(*alias.get(&String::from("dirsize")).unwrap(), String::from("du -hs"));
+        } else {
+            panic!("Not an alias");
+        }
+        //Drop ustream and fail alias get
+        drop(ustream);
+        runner.alias(&mut core, Some(String::from("ll")), None);
+        assert!(runner.exit_flag.is_some());
+        //Reset
+        runner.exit_flag = None;
+        runner.alias(&mut core, None, None);
+        assert!(runner.exit_flag.is_some());
+        //Reset
+        runner.exit_flag = None;
+        runner.alias(&mut core, Some(String::from("ll")), Some(String::from("ls -l --color=auto")));
+        //Verify alias changed actually
+        assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
+    }
+
+    //TODO: test run
 
     #[test]
     fn test_runner_eval_values() {
