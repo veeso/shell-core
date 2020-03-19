@@ -124,16 +124,25 @@ impl ShellRunner {
     /// ### change_directory
     /// 
     /// Execute cd statement
-    fn change_directory(&self, core: &mut ShellCore, path: PathBuf) -> Result<(), ShellError> {
-        core.change_directory(path)
+    fn change_directory(&mut self, core: &mut ShellCore, path: PathBuf) {
+        if let Err(err) = core.change_directory(path) {
+            //Send error
+            if !core.sstream.send(ShellStreamMessage::Error(err)) {
+                //Set exit flag
+                self.exit_flag = Some(255);
+            }
+        }
     }
 
     /// ### dirs
     /// 
     /// Sends the directories in the core stack
-    fn dirs(&self, core: &mut ShellCore) {
+    fn dirs(&mut self, core: &mut ShellCore) {
         let dirs: VecDeque<PathBuf> = core.dirs();
-        core.sstream.send(ShellStreamMessage::Dirs(dirs));
+        if ! core.sstream.send(ShellStreamMessage::Dirs(dirs)) {
+            //Set exit flag
+            self.exit_flag = Some(255);
+        }
     }
 
     /// ### exec
@@ -407,7 +416,6 @@ impl ShellRunner {
     fn exit(&mut self, core: &mut ShellCore, exit_code: u8) {
         //Exit
         self.exit_flag = Some(exit_code);
-        core.exit();
     }
 
     /// ### export
@@ -459,22 +467,38 @@ impl ShellRunner {
     /// ### popd_back
     /// 
     /// Execute popd_back statement. Returns the popped directory if exists
-    fn popd_back(&self, core: &mut ShellCore) -> Option<PathBuf> {
-        core.popd_back()
+    fn popd_back(&mut self, core: &mut ShellCore) {
+        if let Some(dir) = core.popd_back() {
+            let mut dirs: VecDeque<PathBuf> = VecDeque::with_capacity(1);
+            dirs.push_back(dir);
+            if ! core.sstream.send(ShellStreamMessage::Dirs(dirs)) {
+                //Set exit flag
+                self.exit_flag = Some(255);
+            }
+        }
     }
 
     /// ### popd_back
     /// 
     /// Execute popd_front statement. Returns the popped directory if exists
-    fn popd_front(&self, core: &mut ShellCore) -> Option<PathBuf> {
-        core.popd_front()
+    fn popd_front(&mut self, core: &mut ShellCore) {
+        if let Some(dir) = core.popd_front() {
+            let mut dirs: VecDeque<PathBuf> = VecDeque::with_capacity(1);
+            dirs.push_back(dir);
+            if ! core.sstream.send(ShellStreamMessage::Dirs(dirs)) {
+                //Set exit flag
+                self.exit_flag = Some(255);
+            }
+        }
     }
 
     /// ### pushd
     /// 
     /// Execute pushd statement.
-    fn pushd(&self, core: &mut ShellCore, dir: PathBuf) {
+    fn pushd(&mut self, core: &mut ShellCore, dir: PathBuf) {
         core.pushd(dir);
+        //Returns dir
+        self.dirs(core);
     }
 
     /// ### read
@@ -735,7 +759,7 @@ mod tests {
     #[test]
     fn test_runner_alias() {
         let mut runner: ShellRunner = ShellRunner::new();
-        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/bin/")), 128, Box::new(Bash {}));
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Verify alias doesn't exist
         assert!(core.alias_get(&String::from("ll")).is_none());
         //Set alias
@@ -781,6 +805,94 @@ mod tests {
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
     }
 
+    #[test]
+    fn test_runner_change_directory() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        runner.change_directory(&mut core, PathBuf::from("/tmp/"));
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
+        //Try to change directory to not existing path
+        runner.change_directory(&mut core, PathBuf::from("/onett/"));
+        //Directory shouldn't have changed
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
+        //Verify we received an error
+        if let ShellStreamMessage::Error(err) = &ustream.receive().unwrap()[0] {
+            assert_eq!(discriminant(err), discriminant(&ShellError::NoSuchFileOrDirectory(PathBuf::from("/onett/"))));
+        } else {
+            panic!("Not an error");
+        }
+        //Drop ustream and change directory
+        drop(ustream);
+        runner.change_directory(&mut core, PathBuf::from("/onett/"));
+        assert!(runner.exit_flag.is_some());
+    }
+
+    //TODO: chain task
+    //TODO: exec
+    //TODO: exec_history
+    //TODO: exec_function
+    #[test]
+    fn test_runner_exit() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        runner.exit(&mut core, 0);
+        assert_eq!(runner.exit_flag.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_runner_export() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //TODO: implement (requires run_expression)
+    }
+    //TODO: foreach
+    //TODO: ifcond
+    //TODO: let
+    #[test]
+    fn test_runner_dirs() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Get dirs when empty
+        runner.dirs(&mut core);
+        if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
+            assert_eq!(dirs.len(), 1); //Contains home
+        } else {
+            panic!("Not a dirs");
+        }
+        //Push directory
+        runner.pushd(&mut core, PathBuf::from("/tmp/"));
+        if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
+            assert_eq!(dirs.len(), 2); //Contains home and tmp
+        } else {
+            panic!("Not a dirs");
+        }
+        //Popd
+        runner.popd_back(&mut core);
+        if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
+            assert_eq!(dirs.len(), 1); //Contains home and tmp
+            assert_eq!(*dirs[0], core.get_home());
+        } else {
+            panic!("Not a dirs");
+        }
+        runner.popd_front(&mut core);
+        if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
+            assert_eq!(dirs.len(), 1); //Contains home and tmp
+            assert_eq!(*dirs[0], PathBuf::from("/tmp/"));
+        } else {
+            panic!("Not a dirs");
+        }
+        runner.dirs(&mut core);
+        if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
+            assert_eq!(dirs.len(), 0); //Contains none
+        } else {
+            panic!("Not a dirs");
+        }
+    }
+
+    //TODO: read
+    //TODO: set
+    //TODO: source
+    //TODO: while
     //TODO: test run
 
     #[test]
