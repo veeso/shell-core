@@ -162,6 +162,10 @@ impl ShellCore {
     /// 
     /// Pop directory from back
     pub(crate) fn popd_back(&mut self) -> Option<PathBuf> {
+        //Stack can't be empty
+        if self.dirs.len() == 1 {
+            return None
+        }
         self.dirs.pop_back()
     }
 
@@ -169,6 +173,10 @@ impl ShellCore {
     /// 
     /// Pop directory from front
     pub(crate) fn popd_front(&mut self) -> Option<PathBuf> {
+        //Stack can't be empty
+        if self.dirs.len() == 1 {
+            return None
+        }
         self.dirs.pop_front()
     }
 
@@ -721,8 +729,8 @@ mod tests {
         //Popd back
         assert_eq!(core.popd_back().unwrap(), core.home_dir.clone());
         assert_eq!(core.dirs().len(), 1);
-        assert_eq!(core.popd_back().unwrap(), PathBuf::from("/etc/"));
-        //Try to pop when stack is empty
+        //Test stack can't be empty
+        assert!(core.popd_back().is_none());
         assert!(core.popd_front().is_none());
     }
 
