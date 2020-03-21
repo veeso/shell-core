@@ -69,12 +69,24 @@ impl Task {
         }
     }
 
-    /// ### reset_next
+    /// ### truncate
     /// 
-    /// Remove the next Task from a certain task
-    pub(crate) fn reset_next(&mut self) {
-        self.next = None;
-        self.relation = TaskRelation::Unrelated;
+    /// Truncate Task pipeline at a certain index. The provided index will be of the first element removed from the pipeline
+    pub(crate) fn truncate(&mut self, index: usize) {
+        let t: &mut Task = self;
+        let mut i: usize = 0;
+        loop {
+            if t.next.is_none() {
+                return;
+            }
+            let t: &mut Task = &mut t.next.as_mut().unwrap();
+            if i == index {
+                t.next = None; //Set next to None
+                t.relation = TaskRelation::Unrelated; //Set relation to unrelated
+                return;
+            }
+            i = i + 1;
+        }
     }
 
     /// ## start
@@ -331,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn test_task_reset_next() {
+    fn test_task_truncate() {
         let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
         let mut task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
         //Add pipe
@@ -342,11 +354,22 @@ mod tests {
             Redirection::Stderr,
             TaskRelation::And,
         );
+        //Add pipe
+        let command: Vec<String> = vec![String::from("echo"), String::from("pippo")];
+        task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And,
+        );
         assert_eq!(task.relation, TaskRelation::And);
         //Verify next is something
         assert!(task.next.is_some());
         //Reset next
-        task.reset_next();
+        task.truncate(2);
+        assert_eq!(task.relation, TaskRelation::And);
+        assert!(task.next.is_some());
+        let task: Task = *task.next.unwrap();
         assert_eq!(task.relation, TaskRelation::Unrelated);
         assert!(task.next.is_none());
     }
