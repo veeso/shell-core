@@ -1211,6 +1211,10 @@ mod tests {
         assert_eq!(runner.export(&mut core, String::from("FOO"), ShellExpression {
             statements: vec![ShellStatement::Value(String::from("BAR"))]
         }), 0);
+        //Try bad variable name
+        assert_eq!(runner.export(&mut core, String::from("5HIGH"), ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("BAR"))]
+        }), 1);
         //Verify value is exported
         assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
         //Complex export (with task)
@@ -1308,7 +1312,30 @@ mod tests {
         assert!(core.value_get(&String::from("REPLY")).is_none());
     }
 
-    //TODO: set
+    #[test]
+    fn test_runner_set() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Simple export
+        assert_eq!(runner.set(&mut core, String::from("FOO"), ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("BAR"))]
+        }), 0);
+        assert_eq!(runner.set(&mut core, String::from("5HIGH"), ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("BAR"))]
+        }), 1);
+        //Verify value is exported
+        assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
+        //Complex export (with task)
+        let command: Vec<String> = vec![String::from("echo"), String::from("5")];
+        let sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(sample_task)]
+        };
+        assert_eq!(runner.set(&mut core, String::from("RESULT"), expression), 0);
+        //Verify value is exported
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("5"));
+    }
+
     //TODO: source
     //TODO: while
     //TODO: test run
