@@ -132,6 +132,43 @@ impl ShellRunner {
         }
     }
 
+    /// ### unalias
+    /// 
+    /// Remove an alias from core
+    fn unalias(&mut self, core: &mut ShellCore, name: String) -> u8 {
+        match core.unalias(&name) {
+            Some(_) => {
+                0
+            },
+            None => {
+                //Send err alias
+                if ! core.sstream.send(ShellStreamMessage::Error(ShellError::NoSuchAlias(name))) {
+                    self.exit_flag = Some(255);
+                }
+                1
+            }
+        }
+    }
+
+    /// ### case
+    /// 
+    /// Perform case statement
+    fn case(&mut self, core: &mut ShellCore, what: ShellExpression, cases: Vec<(ShellExpression, ShellExpression)>) -> u8 {
+        let mut exitcode: u8 = 0;
+        let (_, output): (u8, String) = self.run_expression(core, what);
+        //Output in
+        for case in cases.iter() {
+            let (_, case_match): (u8, String) = self.run_expression(core, case.0.clone());
+            //If case match is equal to output, execute case perform
+            if case_match == output || case_match == "\\*" {
+                let (rc, _): (u8, String) = self.run_expression(core, case.1.clone());
+                exitcode = rc;
+                break; //Stop iterating
+            }
+        }
+        exitcode
+    }
+
     /// ### change_directory
     /// 
     /// Execute cd statement
@@ -163,7 +200,7 @@ impl ShellRunner {
     /// ### exec
     /// 
     /// Executes through the task manager a Task
-    fn exec(&mut self, core: &mut ShellCore, task: Task) -> Result<u8, ShellError> {
+    fn exec(&mut self, core: &mut ShellCore, task: Task) -> u8 {
         //Execution flags
         let mut brutally_terminated: bool = false;
         let mut relation_satisfied: bool = true;
@@ -317,17 +354,31 @@ impl ShellRunner {
                 break;
             }
         } //@! End of loop
-        Ok(rc)
+        rc
     }
 
     /// ### exec_history
     /// 
     /// Exec a command located in the history
-    fn exec_history(&self, core: &mut ShellCore, index: usize) -> Result<u8, ShellError> {
+    fn exec_history(&mut self, core: &mut ShellCore, index: usize) -> u8 {
         //Get from history and readline
         match core.history_at(index) {
-            Some(cmd) => core.readline(cmd),
-            None => Err(ShellError::OutOfHistoryRange)
+            Some(cmd) => match core.readline(cmd) {
+                Ok(rc) => rc,
+                Err(err) => {
+                    //Report error
+                    if !core.sstream.send(ShellStreamMessage::Error(err)) {
+                        self.exit_flag = Some(255);
+                    }
+                    255
+                }
+            }
+            None => {
+                if !core.sstream.send(ShellStreamMessage::Error(ShellError::OutOfHistoryRange)) {
+                    self.exit_flag = Some(255);
+                }
+                255
+            }
         }
     }
 
@@ -406,36 +457,20 @@ impl ShellRunner {
         chain.unwrap()
     }
 
-    /// ### exec_function
-    /// 
-    /// Executes a shell function
-    fn exec_function(&mut self, core: &mut ShellCore, function: ShellExpression, argv: Vec<String>) -> (u8, String) {
-        //Argv[0] => function name, [1..] => arguments
-        //Set arguments to storage
-        for (index, arg) in argv.iter().enumerate() {
-            core.storage_set(index.to_string(), arg.clone());
-        }
-        //Execute function
-        let (rc, output): (u8, String) = self.run_expression(core, function);
-        //Unset argument from storage
-        for (index, arg) in argv.iter().enumerate() {
-            core.value_unset(&index.to_string());
-        }
-        //Return rc and output
-        (rc, output)
-    }
-
     /// ### exec_time
     /// 
     /// Executes a command with duration
-    fn exec_time(&mut self, core: &mut ShellCore, task: Task) -> Result<(u8, Duration), ShellError> {
+    fn exec_time(&mut self, core: &mut ShellCore, task: Task) -> u8 {
         let t_start: Instant = Instant::now();
-        match self.exec(core, task) {
-            Err(err) => Err(err),
-            Ok(rc) => {
-                Ok((rc, t_start.elapsed()))
-            }
+        let rc: u8 = self.exec(core, task);
+        //Report execution time
+        let exec_time: Duration = t_start.elapsed();
+        //Report execution time
+        if ! core.sstream.send(ShellStreamMessage::Time(exec_time)) {
+            //Set exit flag
+            self.exit_flag = Some(255);
         }
+        rc
     }
 
     /// ### exit
@@ -467,37 +502,54 @@ impl ShellRunner {
     /// ### foreach
     /// 
     /// Perform a for statement
-    fn foreach(&mut self, core: &mut ShellCore, key: String, condition: ShellExpression, expression: ShellExpression) {
+    fn foreach(&mut self, core: &mut ShellCore, key: String, condition: ShellExpression, expression: ShellExpression) -> u8 {
         //Get result of condition
+        let mut exitcode: u8 = 0;
         let (rc, output): (u8, String) = self.run_expression(core, condition);
         if rc != 0 {
-            return;
+            return 255;
         }
         //Iterate over output split by whitespace
         for i in output.split_whitespace() {
             //Export key to storage
             core.storage_set(key.clone(), i.to_string());
             //Execute expression
-            let _ = self.run_expression(core, expression.clone());
+            let (rc, _): (u8, String) = self.run_expression(core, expression.clone());
+            exitcode = rc;
         }
         //Remove key from storage
         core.value_unset(&key);
+        exitcode
+    }
+
+    /// ### function
+    /// 
+    /// Add a new function to core
+    fn function(&mut self, core: &mut ShellCore, name: String, expression: ShellExpression) -> u8 {
+        match core.function_set(name, expression) {
+            true => 0,
+            false => 1
+        }
     }
 
     /// ### ifcond
     /// 
     /// Perform if statement
-    fn ifcond(&mut self, core: &mut ShellCore, condition: ShellExpression, if_perform: ShellExpression, else_perform: Option<ShellExpression>) {
+    fn ifcond(&mut self, core: &mut ShellCore, condition: ShellExpression, if_perform: ShellExpression, else_perform: Option<ShellExpression>) -> u8 {
         //Get result of condition
+        let mut exitcode: u8 = 0;
         let (rc, _): (u8, String) = self.run_expression(core, condition);
         //If rc is 0 => execute if perform
         if rc == 0 {
             //Execute expression
-            let _ = self.run_expression(core, if_perform);
+            let (rc, _) = self.run_expression(core, if_perform);
+            exitcode = rc;
         } else if let Some(else_perform) = else_perform {
             //Perform else if set
-            let _ = self.run_expression(core, else_perform);
+            let (rc, _) = self.run_expression(core, else_perform);
+            exitcode = rc;
         }
+        exitcode
     }
 
     /// ### let_perform
@@ -707,14 +759,14 @@ impl ShellRunner {
     /// ### source
     /// 
     /// Source file
-    fn source(&self, core: &mut ShellCore, file: PathBuf) -> bool {
+    fn source(&self, core: &mut ShellCore, file: PathBuf) -> u8 {
         //Source file, report any error
         if let Err(err) = core.source(file) {
             //Report error
             core.sstream.send(ShellStreamMessage::Error(err));
-            false
+            0
         } else {
-            true
+            1
         }
     }
 
@@ -772,15 +824,18 @@ impl ShellRunner {
     /// ### while_loop
     /// 
     /// Perform While shell statement
-    fn while_loop(&mut self, core: &mut ShellCore, condition: ShellExpression, expression: ShellExpression) {
+    fn while_loop(&mut self, core: &mut ShellCore, condition: ShellExpression, expression: ShellExpression) -> u8 {
+        let mut exitcode: u8 = 0;
         loop {
             let (rc, _): (u8, String) = self.run_expression(core, condition.clone());
             if rc != 0 { //If rc is NOT 0, break
                 break;
             }
             //Otherwise perform expression
-            let _ = self.run_expression(core, expression.clone());
+            let (rc, _) = self.run_expression(core, expression.clone());
+            exitcode = rc;
         }
+        exitcode
     }
 
     /// ### get_expression_str_value
@@ -788,15 +843,131 @@ impl ShellRunner {
     /// Return the string output and the result of an expression.
     /// This function is very important since must be used by all the other statements which uses an expression (e.g. set, export, case, if...)
     fn run_expression(&mut self, core: &mut ShellCore, expression: ShellExpression) -> (u8, String) {
-        //TODO: implement
         let mut rc: u8 = 0;
         let mut output: String = String::new();
         //Iterate over expression
         //NOTE: the expression is executed as long as it's possible
         for statement in expression.statements.iter() {
             //Match statement and execute it
-            //TODO: check exit flag
-            //TODO: look for inputs
+            match statement {
+                ShellStatement::Alias(name, cmd) => {
+                    rc = self.alias(core, name.clone(), cmd.clone());
+                },
+                ShellStatement::Break => {
+                    break; //Stop iterating
+                },
+                ShellStatement::Case(what, cases) => {
+                    rc = self.case(core, what.clone(), cases.clone());
+                },
+                ShellStatement::Cd(path) => {
+                    rc = self.change_directory(core, path.clone());
+                },
+                ShellStatement::Continue => {
+                    //Keep iterating
+                    continue;
+                },
+                ShellStatement::Dirs => {
+                    rc = self.dirs(core);
+                },
+                ShellStatement::Exec(task) => {
+                    rc = self.exec(core, task.clone());
+                },
+                ShellStatement::ExecHistory(index)  => {
+                    rc = self.exec_history(core, *index);
+                },
+                ShellStatement::Exit(exitcode) => {
+                    self.exit(core, *exitcode);
+                },
+                ShellStatement::Export(key, value) => {
+                    rc = self.export(core, key.clone(), value.clone());
+                },
+                ShellStatement::For(what, when, perform) => {
+                    rc = self.foreach(core, what.clone(), when.clone(), perform.clone());
+                },
+                ShellStatement::Function(name, expression) => {
+                    rc = self.function(core, name.clone(), expression.clone());
+                },
+                ShellStatement::If(what, perform_if, perform_else) => {
+                    rc = self.ifcond(core, what.clone(), perform_if.clone(), perform_else.clone());
+                },
+                ShellStatement::Let(dest, operator1, operation, operator2) => {
+                    rc = self.let_perform(core, dest.clone(), operator1.clone(), operation.clone(), operator2.clone());
+                },
+                ShellStatement::PopdBack => {
+                    rc = self.popd_back(core);
+                },
+                ShellStatement::PopdFront => {
+                    rc = self.popd_front(core);
+                },
+                ShellStatement::Pushd(dir) => {
+                    rc = self.pushd(core, dir.clone());
+                },
+                ShellStatement::Read(prompt, length, result_key) => {
+                    rc = self.read(core, prompt.clone(), length.clone(), result_key.clone());
+                },
+                ShellStatement::Return(ret) => {
+                    return (*ret, output);
+                },
+                ShellStatement::Set(key, value) => {
+                    rc = self.set(core, key.clone(), value.clone());
+                },
+                ShellStatement::Source(file) => {
+                    rc = self.source(core, file.clone());
+                },
+                ShellStatement::Time(task) => {
+                    rc = self.exec_time(core, task.clone());
+                },
+                ShellStatement::Unalias(alias) => {
+                    rc = self.unalias(core, alias.clone());
+                },
+                ShellStatement::Value(val) => {
+                    output = self.eval_value(core, val.clone());
+                    rc = 0;
+                },
+                ShellStatement::While(until, perform) => {
+                    rc = self.while_loop(core, until.clone(), perform.clone());
+                }
+            }
+            //look for inputs
+            match core.sstream.receive() {
+                Ok(inbox) => {
+                    //Iterate over received messages
+                    for message in inbox.iter() {
+                        //Match message and handle it
+                        match message {
+                            UserStreamMessage::Input(stdin) => {
+                                //Store input into runner buffer
+                                self.buffer = match self.buffer.as_mut() {
+                                    Some(buf) => {
+                                        buf.push_str(stdin.as_str());
+                                        Some(buf.to_string())
+                                    },
+                                    None => Some(stdin.to_string())
+                                };
+                            },
+                            UserStreamMessage::Interrupt => {
+                                self.exit_flag = Some(255);
+                            },
+                            UserStreamMessage::Kill => {
+                                self.exit_flag = Some(9);
+                            },
+                            UserStreamMessage::Signal(sig) => {
+                                self.exit_flag = Some(*sig as u8);
+                            }
+                        }
+                    }
+                },
+                Err(_) => {
+                    //Endpoint hung up, terminate
+                    self.exit_flag = Some(255);
+                }
+            }
+            //check exit flag
+            if let Some(exitcode) = self.exit_flag {
+                //If exit flag is set, terminate expression execution
+                rc = exitcode;
+                break;
+            }
         }
         (rc, output)
     }
@@ -929,6 +1100,15 @@ mod tests {
         } else {
             panic!("Not an alias");
         }
+        assert_eq!(runner.alias(&mut core, Some(String::from("grep")), Some(String::from("grep --color=auto"))), 0);
+        assert_eq!(runner.unalias(&mut core, String::from("grep")), 0);
+        //Try to unalias something that doesn't exist
+        assert_eq!(runner.unalias(&mut core, String::from("fooooooo")), 1);
+        if let ShellStreamMessage::Error(err) = &ustream.receive().unwrap()[0] {
+            assert_eq!(discriminant(err), discriminant(&ShellError::NoSuchAlias(String::from("foobar"))));
+        } else {
+            panic!("Not an error");
+        }
         //Drop ustream and fail alias get
         drop(ustream);
         assert_eq!(runner.alias(&mut core, Some(String::from("ll")), None), 0);
@@ -944,6 +1124,7 @@ mod tests {
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
         //Try to set a bad alias
         assert_eq!(runner.alias(&mut core, Some(String::from("l/l")), Some(String::from("ls -l"))), 1);
+        //Try to remove alias
     }
 
     #[test]
