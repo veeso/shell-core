@@ -108,6 +108,7 @@ pub enum TaskRelation {
 /// ## TaskMessageTx
 /// 
 /// Messages to be sent from shell to Task
+#[derive(std::fmt::Debug)]
 pub(crate) enum TaskMessageTx {
     Input(String),              //Send Input
     Kill,                       //Kill process
@@ -118,6 +119,7 @@ pub(crate) enum TaskMessageTx {
 /// ## TaskMessageRx
 /// 
 /// Messages to be sent from Task back to shell
+#[derive(std::fmt::Debug)]
 pub(crate) enum TaskMessageRx {
     Output((Option<String>, Option<String>)), //Task Output (Stdout, Stderr)
     Error(TaskError) //Report error

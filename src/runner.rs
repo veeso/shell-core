@@ -200,13 +200,14 @@ impl ShellRunner {
     /// ### exec
     /// 
     /// Executes through the task manager a Task
-    fn exec(&mut self, core: &mut ShellCore, task: Task) -> u8 {
+    fn exec(&mut self, core: &mut ShellCore, task: Task) -> (u8, String) {
         //Execution flags
         let mut brutally_terminated: bool = false;
         let mut relation_satisfied: bool = true;
         //Create command chain from Task
         let mut chain: TaskChain = self.chain_task(core, task);
         let mut rc: u8 = 0;
+        let mut output: String = String::new(); //Output is both returned here and sent to the user
         //Iterate over task chain
         loop {
             if relation_satisfied { //Only if relation is satisfied
@@ -226,7 +227,7 @@ impl ShellRunner {
                     }
                     self.buffer = None;
                     //Iterate until task manager is running
-                    while task_manager.is_running() {
+                    loop {
                         //Fetch messages
                         match task_manager.fetch_messages() {
                             Ok(inbox) => {
@@ -240,6 +241,7 @@ impl ShellRunner {
                                         TaskMessageRx::Output((stdout, stderr)) => {
                                             if stdout.is_some() || stderr.is_some() {
                                                 let _ = core.sstream.send(ShellStreamMessage::Output((stdout.clone(), stderr.clone())));
+                                                output.push_str(stdout.as_ref().unwrap().as_str());
                                             }
                                         }
                                     }
@@ -292,11 +294,15 @@ impl ShellRunner {
                                 break;
                             }
                         }
-                        //Sleep for 50ms
-                        sleep(Duration::from_millis(50));
+                        if task_manager.is_running() { //If running, sleep
+                            //Sleep for 50ms
+                            sleep(Duration::from_millis(50));
+                        } else {
+                            //Join process and break
+                            rc = task_manager.join().unwrap_or(255);
+                            break;
+                        }
                     } //@! End of task manager loop
-                    //Get exit code
-                    rc = task_manager.join().unwrap_or(255);
                     if brutally_terminated {
                         //Set exit flag to true and break
                         self.exit_flag = Some(rc);
@@ -304,15 +310,16 @@ impl ShellRunner {
                     }
                 } else if let Some(func) = chain.function { //@! Functions
                     //Execute function
-                    let (exitcode, output): (u8, String) = self.run_expression(core, func.expression);
+                    let (exitcode, out): (u8, String) = self.run_expression(core, func.expression);
+                    output.push_str(out.as_str());
                     rc = exitcode;
                     //Redirect output
                     if chain.next_relation == TaskRelation::Pipe {
                         //Push output to buffer
-                        self.buffer = Some(output);
+                        self.buffer = Some(out);
                     } else {
                         //Redirect output
-                        if let Err(err) = self.redirect_function_output(&core.sstream, func.redirection, output) {
+                        if let Err(err) = self.redirect_function_output(&core.sstream, func.redirection, out) {
                             //Report error
                             if !core.sstream.send(ShellStreamMessage::Error(err)) {
                                 break; //Endpoint hung up
@@ -354,7 +361,11 @@ impl ShellRunner {
                 break;
             }
         } //@! End of loop
-        rc
+        //Remove last new line from output
+        if output.ends_with("\n") {
+            let _ = output.pop();
+        }
+        (rc, output)
     }
 
     /// ### exec_history
@@ -386,6 +397,8 @@ impl ShellRunner {
     fn chain_task(&self, core: &mut ShellCore, mut head: Task) -> TaskChain {
         let mut chain: Option<TaskChain> = None;
         let mut previous_was_function: bool = false;
+        let head_copy: Task = head.clone();
+        let mut last_chain_block: Option<Task> = None;
         //Iterate over tasks
         loop {
             //Resolve task command
@@ -398,27 +411,43 @@ impl ShellRunner {
                     argv.push(String::from(arg));
                 }
                 //Push head.command[1..] to argv
-                for arg in head.command[1..].iter() {
-                    argv.push(String::from(arg));
+                if head.command.len() > 1 {
+                    for arg in head.command[1..].iter() {
+                        argv.push(String::from(arg));
+                    }
                 }
                 command = argv[0].clone();
             }
             //Evaluate values
-            for arg in argv[1..].iter_mut() {
-                //Resolve value
-                *arg = self.eval_value(core, arg.to_string());
+            if argv.len() > 1 {
+                for arg in argv[1..].iter_mut() {
+                    //Resolve value
+                    *arg = self.eval_value(core, arg.to_string());
+                }
             }
             //Push argv to task
             head.command = argv;
             //Check if first element is a function
             if let Some(func) = core.function_get(&command) {
+                //If it's a function, chain previous task block
+                if let Some(chain_block) = last_chain_block.take() {
+                    //Chain task
+                    match chain.as_mut() {
+                        None => {
+                            chain = Some(TaskChain::new(Some(chain_block.clone()), None, TaskRelation::Unrelated));
+                        },
+                        Some(chain_obj) => {
+                            chain_obj.chain(Some(chain_block.clone()), None, chain_block.relation);
+                        }
+                    }
+                }
                 //If it's a function chain a function
                 previous_was_function = true;
                 match chain.as_mut() {
                     None => {
                         chain = Some(TaskChain::new(None, Some(Function::new(func, head.stdout_redirection.clone())), TaskRelation::Unrelated));
                     },
-                    Some(mut chain_obj) => {
+                    Some(chain_obj) => {
                         chain_obj.chain(None, Some(Function::new(func, head.stdout_redirection.clone())), head.relation);
                     }
                 };
@@ -434,15 +463,7 @@ impl ShellRunner {
             } else {
                 if previous_was_function {
                     previous_was_function = false;
-                    //Chain task
-                    match chain.as_mut() {
-                        None => {
-                            chain = Some(TaskChain::new(Some(head.clone()), None, TaskRelation::Unrelated));
-                        },
-                        Some(mut chain_obj) => {
-                            chain_obj.chain(Some(head.clone()), None, head.relation);
-                        }
-                    }
+                    last_chain_block = Some(head.clone());
                 }
                 //Go ahead
                 if let Some(task) = head.next {
@@ -454,15 +475,32 @@ impl ShellRunner {
                 }
             }
         }
-        chain.unwrap()
+        //If chain block is Some, finish chain
+        if let Some(chain_block) = last_chain_block {
+            //Chain task
+            match chain.as_mut() {
+                None => {
+                    chain = Some(TaskChain::new(Some(chain_block.clone()), None, TaskRelation::Unrelated));
+                },
+                Some(chain_obj) => {
+                    chain_obj.chain(Some(chain_block.clone()), None, chain_block.relation);
+                }
+            }
+        }
+        //Return chain
+        if let Some(chain) = chain { //If some return Chain
+            chain
+        } else { //Otherwise return chain with head as unique block
+            TaskChain::new(Some(head_copy), None, TaskRelation::Unrelated)
+        }
     }
 
     /// ### exec_time
     /// 
     /// Executes a command with duration
-    fn exec_time(&mut self, core: &mut ShellCore, task: Task) -> u8 {
+    fn exec_time(&mut self, core: &mut ShellCore, task: Task) -> (u8, String) {
         let t_start: Instant = Instant::now();
-        let rc: u8 = self.exec(core, task);
+        let (rc, stdout): (u8, String) = self.exec(core, task);
         //Report execution time
         let exec_time: Duration = t_start.elapsed();
         //Report execution time
@@ -470,13 +508,13 @@ impl ShellRunner {
             //Set exit flag
             self.exit_flag = Some(255);
         }
-        rc
+        (rc, stdout)
     }
 
     /// ### exit
     /// 
     /// Terminates Expression execution and shell
-    fn exit(&mut self, core: &mut ShellCore, exit_code: u8) {
+    fn exit(&mut self, _core: &mut ShellCore, exit_code: u8) {
         //Exit
         self.exit_flag = Some(exit_code);
     }
@@ -870,7 +908,9 @@ impl ShellRunner {
                     rc = self.dirs(core);
                 },
                 ShellStatement::Exec(task) => {
-                    rc = self.exec(core, task.clone());
+                    let (exitcode, stdout): (u8, String) = self.exec(core, task.clone());
+                    rc = exitcode;
+                    output.push_str(stdout.as_str());
                 },
                 ShellStatement::ExecHistory(index)  => {
                     rc = self.exec_history(core, *index);
@@ -915,7 +955,9 @@ impl ShellRunner {
                     rc = self.source(core, file.clone());
                 },
                 ShellStatement::Time(task) => {
-                    rc = self.exec_time(core, task.clone());
+                    let (exitcode, stdout): (u8, String) = self.exec_time(core, task.clone());
+                    rc = exitcode;
+                    output.push_str(stdout.as_str());
                 },
                 ShellStatement::Unalias(alias) => {
                     rc = self.unalias(core, alias.clone());
@@ -1124,7 +1166,6 @@ mod tests {
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
         //Try to set a bad alias
         assert_eq!(runner.alias(&mut core, Some(String::from("l/l")), Some(String::from("ls -l"))), 1);
-        //Try to remove alias
     }
 
     #[test]
@@ -1152,7 +1193,6 @@ mod tests {
     //TODO: chain task
     //TODO: exec
     //TODO: exec_history
-    //TODO: exec_function
     //TODO: exec_time
 
     #[test]
@@ -1166,8 +1206,22 @@ mod tests {
     #[test]
     fn test_runner_export() {
         let mut runner: ShellRunner = ShellRunner::new();
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
-        //TODO: implement (requires run_expression)
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Simple export
+        assert_eq!(runner.export(&mut core, String::from("FOO"), ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("BAR"))]
+        }), 0);
+        //Verify value is exported
+        assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
+        //Complex export (with task)
+        let command: Vec<String> = vec![String::from("echo"), String::from("5")];
+        let sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(sample_task)]
+        };
+        assert_eq!(runner.export(&mut core, String::from("RESULT"), expression), 0);
+        //Verify value is exported
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("5"));
     }
     
     //TODO: foreach
