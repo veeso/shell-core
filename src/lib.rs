@@ -90,6 +90,7 @@ pub enum ShellError {
     NoSuchFileOrDirectory(PathBuf),
     NotADirectory(PathBuf),
     PermissionDenied(PathBuf),
+    BadValue(String),           //Bad value error (e.g. bad variable name)
     OutOfHistoryRange,          //Out of History Range
     ShellNotInIdle,             //The shell must be in Idle state to perform this action
     NoSuchAlias(String),        //Alias doesn't exist
@@ -166,11 +167,19 @@ pub enum ShellStatement {
 /// Math operator is used by Let statement
 #[derive(Clone, PartialEq, std::fmt::Debug)]
 pub enum MathOperator {
+    And,
     Divide,
+    Equal,
     Module,
     Multiply,
+    NotEqual,
+    Or,
+    Power,
+    ShiftLeft,
+    ShiftRight,
     Subtract,
-    Sum
+    Sum,
+    Xor
 }
 
 /// ## MathError
@@ -178,7 +187,8 @@ pub enum MathOperator {
 /// MathError represents an error while performing some math operation
 #[derive(Clone, PartialEq, std::fmt::Debug)]
 pub enum MathError {
-    DividedByZero
+    DividedByZero,
+    NegativePower
 }
 
 /// ## ShellRunner
