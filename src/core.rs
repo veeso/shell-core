@@ -111,8 +111,13 @@ impl ShellCore {
     /// ### alias_set
     /// 
     /// Set an alias in the current shell environment
-    pub(crate) fn alias_set(&mut self, alias: String, command: String) {
-        self.alias.insert(alias, command);
+    pub(crate) fn alias_set(&mut self, alias: String, command: String) -> bool {
+        if ! self.is_alias_name_valid(&alias) {
+            false
+        } else {
+            self.alias.insert(alias, command);
+            true
+        }
     }
 
     /// ### unalias
@@ -590,6 +595,8 @@ impl ShellCore {
         let _ = self.storage.remove(key);
     }
 
+    //@! Validators
+
     /// ### is_variable_name_valid
     /// 
     /// Checks whether a variable name is valid
@@ -597,6 +604,13 @@ impl ShellCore {
         key.chars().nth(0).unwrap_or(0x00_u8.into()).is_ascii_alphabetic()
     }
 
+    /// ### is_alias_name_valid
+    /// 
+    /// Returns whether the alias has a valid name
+    fn is_alias_name_valid(&self, name: &String) -> bool {
+        name.chars().all(char::is_alphanumeric)
+    }
+ 
 }
 
 #[cfg(test)]
@@ -640,7 +654,7 @@ mod tests {
         //Instantiate Core
         let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Set alias
-        core.alias_set(String::from("ll"), String::from("ls -l"));
+        assert!(core.alias_set(String::from("ll"), String::from("ls -l")));
         //Get alias
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l"));
         //Try to get unexisting alias
@@ -649,7 +663,7 @@ mod tests {
         core.alias_set(String::from("ll"), String::from("ls -l --color=auto"));
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
         //Add another alias and test get all alias
-        core.alias_set(String::from("please"), String::from("sudo"));
+        assert!(core.alias_set(String::from("please"), String::from("sudo")));
         let alias_table: HashMap<String, String> = core.alias_get_all();
         //Verify table
         assert_eq!(alias_table.len(), 2);
@@ -659,6 +673,8 @@ mod tests {
         assert!(core.unalias(&String::from("foobar")).is_none());
         assert!(core.alias_get(&String::from("ll")).is_none());
         assert!(core.alias_get(&String::from("please")).is_none());
+        //Verify bad alias name
+        assert!(! core.alias_set(String::from("l$l"), String::from("ls -l")));
     }
 
     #[test]
