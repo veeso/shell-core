@@ -543,8 +543,14 @@ impl ShellCore {
     /// ### environ_set
     /// 
     /// Set a value in the environment
-    pub(crate) fn environ_set(&self, key: String, value: String) {
-        env::set_var(key, value);
+    /// Returns false if the variable name is invalid
+    pub(crate) fn environ_set(&self, key: String, value: String) -> bool {
+        if ! self.is_variable_name_valid(&key) {
+            false
+        } else {
+            env::set_var(key, value);
+            true
+        }
     }
 
     /// ### environ_unset
@@ -567,8 +573,14 @@ impl ShellCore {
     /// ### storage_set
     /// 
     /// Set a value in the Shell storage
-    pub(crate) fn storage_set(&mut self, key: String, value: String) {
-        self.storage.insert(key, value);
+    /// Returns false if the variable name is invalid
+    pub(crate) fn storage_set(&mut self, key: String, value: String) -> bool {
+        if ! self.is_variable_name_valid(&key) {
+            false
+        } else {
+            self.storage.insert(key, value);
+            true
+        }
     }
 
     /// ### storage_unset
@@ -576,6 +588,13 @@ impl ShellCore {
     /// Unset a value from the storage
     fn storage_unset(&mut self, key: &String) {
         let _ = self.storage.remove(key);
+    }
+
+    /// ### is_variable_name_valid
+    /// 
+    /// Checks whether a variable name is valid
+    fn is_variable_name_valid(&self, key: &String) -> bool {
+        key.chars().nth(0).unwrap_or(0x00_u8.into()).is_ascii_alphabetic()
     }
 
 }
@@ -844,7 +863,7 @@ mod tests {
         assert!(core.value_get(&String::from("FOO")).is_none());
         assert!(core.storage_get(&String::from("FOO")).is_none());
         //Set a value in the storage
-        core.storage_set(String::from("FOO"), String::from("BAR"));
+        assert!(core.storage_set(String::from("FOO"), String::from("BAR")));
         //Verify value is in the storage
         assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
         //Unset value
@@ -854,11 +873,16 @@ mod tests {
         core.environ_set(String::from("MYKEY"), String::from("305"));
         assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("305"));
         //Set a value in the storage with name MYKEY
-        core.storage_set(String::from("MYKEY"), String::from("SATURN"));
+        assert!(core.storage_set(String::from("MYKEY"), String::from("SATURN")));
         //Now MYKEY, if retrieved should be SATURN
         assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("SATURN"));
         //In environ the value should be still 305
         assert_eq!(core.environ_get(&String::from("MYKEY")).unwrap(), String::from("305"));
+        //Test bad variable names
+        assert!(! core.storage_set(String::from("7YEARS"), String::from("FOO")));
+        assert!(! core.storage_set(String::from("/NAME"), String::from("FOO")));
+        assert!(! core.environ_set(String::from("7YEARS"), String::from("FOO")));
+        assert!(! core.environ_set(String::from("/NAME"), String::from("FOO")));
     }
 
     fn create_tmpfile() -> tempfile::NamedTempFile {
