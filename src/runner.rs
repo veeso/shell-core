@@ -38,6 +38,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use std::time::Duration;
 use std::thread::sleep;
 
@@ -424,6 +425,19 @@ impl ShellRunner {
         (rc, output)
     }
 
+    /// ### exec_time
+    /// 
+    /// Executes a command with duration
+    fn exec_time(&mut self, core: &mut ShellCore, task: Task) -> Result<(u8, Duration), ShellError> {
+        let t_start: Instant = Instant::now();
+        match self.exec(core, task) {
+            Err(err) => Err(err),
+            Ok(rc) => {
+                Ok((rc, t_start.elapsed()))
+            }
+        }
+    }
+
     /// ### exit
     /// 
     /// Terminates Expression execution and shell
@@ -704,8 +718,6 @@ impl ShellRunner {
         }
     }
 
-    //TODO: time (set instant, execute command, get duration, return duration)
-
     /// ### eval_value
     /// 
     /// Evaluate value
@@ -960,6 +972,8 @@ mod tests {
     //TODO: exec
     //TODO: exec_history
     //TODO: exec_function
+    //TODO: exec_time
+
     #[test]
     fn test_runner_exit() {
         let mut runner: ShellRunner = ShellRunner::new();
