@@ -61,6 +61,7 @@ struct TaskChain {
 #[derive(std::fmt::Debug)]
 struct Function {
     pub expression: ShellExpression,
+    pub args: Vec<String>,
     pub redirection: Redirection,
 }
 
@@ -1080,9 +1081,10 @@ impl Function {
     /// ### new
     /// 
     /// Instantiate a new Function
-    pub(self) fn new(expression: ShellExpression, redirection: Redirection) -> Function {
+    pub(self) fn new(expression: ShellExpression, args: Vec<String>, redirection: Redirection) -> Function {
         Function {
             expression: expression,
+            args: args,
             redirection: redirection
         }
     }
@@ -1231,7 +1233,6 @@ mod tests {
     
     //TODO: foreach
     //TODO: ifcond
-    //TODO: let
     #[test]
     fn test_runner_let() {
         let mut runner: ShellRunner = ShellRunner::new();
@@ -1518,9 +1519,11 @@ mod tests {
             statements: statements
         };
         //Instantiate function
-        let function: Function = Function::new(expression, Redirection::Stdout);
+        let argv: Vec<String> = vec![String::from("hi")];
+        let function: Function = Function::new(expression, argv, Redirection::Stdout);
         assert_eq!(function.redirection, Redirection::Stdout);
         assert_eq!(function.expression.statements.len(), 1);
+        assert_eq!(function.args.len(), 1);
         assert_eq!(discriminant(&function.expression.statements[0]), discriminant(&ShellStatement::Exit(0)));
     }
 
@@ -1532,7 +1535,8 @@ mod tests {
             statements: statements
         };
         //Instantiate function
-        let function: Function = Function::new(expression, Redirection::Stdout);
+        let argv: Vec<String> = vec![String::from("hi")];
+        let function: Function = Function::new(expression, argv, Redirection::Stdout);
         let mut chain: TaskChain = TaskChain::new(None, Some(function), TaskRelation::Unrelated);
         //Verify constructor
         assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
@@ -1548,7 +1552,8 @@ mod tests {
         let expression: ShellExpression = ShellExpression {
             statements: statements
         };
-        let function: Function = Function::new(expression, Redirection::Stdout);
+        let argv: Vec<String> = vec![String::from("hi")];
+        let function: Function = Function::new(expression, argv, Redirection::Stdout);
         //Chain a new function
         chain.chain(None, Some(function), TaskRelation::And);
         assert_eq!(chain.next_relation, TaskRelation::And);
@@ -1566,7 +1571,8 @@ mod tests {
         let expression: ShellExpression = ShellExpression {
             statements: statements
         };
-        let function: Function = Function::new(expression, Redirection::Stdout);
+        let argv: Vec<String> = vec![String::from("hi")];
+        let function: Function = Function::new(expression, argv, Redirection::Stdout);
         //Chain a 3rd element
         chain.chain(None, Some(function), TaskRelation::Or);
         let next: &TaskChain = chain.next.as_ref().unwrap();
