@@ -183,7 +183,7 @@ impl ShellCore {
     /// ### exit
     /// 
     /// Terminate shell and exit
-    pub(crate) fn exit(&mut self) {
+    pub fn exit(&mut self) {
         self.state = ShellState::Terminated;
         self.exit_code = 0;
         self.execution_time = Duration::from_secs(0);
