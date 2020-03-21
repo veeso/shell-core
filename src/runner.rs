@@ -416,13 +416,19 @@ impl ShellRunner {
     }
 
     /// ### Resolve tasks commands building
+    /// 
+    /// Separate functions from tasks into individual blocks.
+    /// This function is kinda compley, I don't know exactly what it does, but works. Don't touch it.
     fn chain_task(&self, core: &mut ShellCore, mut head: Task) -> TaskChain {
         let mut chain: Option<TaskChain> = None;
         let mut previous_was_function: bool = false;
-        let head_copy: Task = head.clone();
+        let mut last_relation: TaskRelation = TaskRelation::Unrelated;
+        let origin: Task = head.clone();
         let mut last_chain_block: Option<Task> = None;
+        let mut chain_block_length: usize = 0;
         //Iterate over tasks
         loop {
+            chain_block_length += 1;
             //Resolve task command
             let mut command: String = head.command[0].clone();
             let mut argv: Vec<String> = Vec::new(); //New argv
@@ -438,9 +444,12 @@ impl ShellRunner {
                         argv.push(String::from(arg));
                     }
                 }
-                command = argv[0].clone();
+            } else {
+                //argv is head command
+                argv = head.command.clone();
             }
-            //Evaluate values
+            command = argv[0].clone();
+            //@! Evaluate values
             if argv.len() > 1 {
                 for arg in argv[1..].iter_mut() {
                     //Resolve value
@@ -448,18 +457,21 @@ impl ShellRunner {
                 }
             }
             //Push argv to task
-            head.command = argv;
+            head.command = argv.clone();
             //Check if first element is a function
             if let Some(func) = core.function_get(&command) {
                 //If it's a function, chain previous task block
-                if let Some(chain_block) = last_chain_block.take() {
+                if let Some(mut chain_block) = last_chain_block.take() {
+                    //Truncate task at index and get last relation
+                    last_relation = chain_block.truncate(chain_block_length);
+                    chain_block_length = 0;
                     //Chain task
                     match chain.as_mut() {
                         None => {
                             chain = Some(TaskChain::new(Some(chain_block.clone()), None, TaskRelation::Unrelated));
                         },
                         Some(chain_obj) => {
-                            chain_obj.chain(Some(chain_block.clone()), None, chain_block.relation);
+                            chain_obj.chain(Some(chain_block.clone()), None, last_relation);
                         }
                     }
                 }
@@ -467,23 +479,25 @@ impl ShellRunner {
                 previous_was_function = true;
                 match chain.as_mut() {
                     None => {
-                        chain = Some(TaskChain::new(None, Some(Function::new(func, head.stdout_redirection.clone())), TaskRelation::Unrelated));
+                        chain = Some(TaskChain::new(None, Some(Function::new(func, argv, head.stdout_redirection.clone())), TaskRelation::Unrelated));
                     },
                     Some(chain_obj) => {
-                        chain_obj.chain(None, Some(Function::new(func, head.stdout_redirection.clone())), head.relation);
+                        chain_obj.chain(None, Some(Function::new(func, argv, head.stdout_redirection.clone())), last_relation);
                     }
                 };
-                //Empty Task.next and relation
+                last_relation = head.relation.clone();
+                //Truncate task and relation
                 if let Some(task) = head.next.clone() {
-                    head.reset_next();
                     //Override head
+                    //last_relation = head.relation.clone();
                     head = *task;
                 } else { //No other tasks to iterate through
                     //Break
                     break;
                 }
-            } else {
-                if previous_was_function {
+            } else { //Not a function
+                //If previous was function or last chain block is none
+                if previous_was_function || last_chain_block.is_none() {
                     previous_was_function = false;
                     last_chain_block = Some(head.clone());
                 }
@@ -496,25 +510,22 @@ impl ShellRunner {
                     break;
                 }
             }
-        }
+        } //@! End of loop
         //If chain block is Some, finish chain
-        if let Some(chain_block) = last_chain_block {
+        if let Some(chain_block) = last_chain_block.take() {
             //Chain task
             match chain.as_mut() {
                 None => {
-                    chain = Some(TaskChain::new(Some(chain_block.clone()), None, TaskRelation::Unrelated));
+                    chain = Some(TaskChain::new(Some(chain_block), None, TaskRelation::Unrelated));
                 },
                 Some(chain_obj) => {
-                    chain_obj.chain(Some(chain_block.clone()), None, chain_block.relation);
+                    chain_obj.chain(Some(chain_block.clone()), None, last_relation);
                 }
             }
         }
         //Return chain
-        if let Some(chain) = chain { //If some return Chain
-            chain
-        } else { //Otherwise return chain with head as unique block
-            TaskChain::new(Some(head_copy), None, TaskRelation::Unrelated)
-        }
+        println!("TASK: {:?}", chain);
+        chain.unwrap()
     }
 
     /// ### exec_time
@@ -1214,7 +1225,91 @@ mod tests {
         assert!(runner.exit_flag.is_some());
     }
 
-    //TODO: chain task
+    #[test]
+    fn test_runner_chain_task() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Simple task
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Unrelated,
+        );
+        //Chain task
+        let chain: TaskChain = runner.chain_task(&mut core, sample_task);
+        assert!(chain.task.is_some());
+        assert!(chain.function.is_none());
+        assert_eq!(chain.next_relation, TaskRelation::Unrelated);
+        assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
+        assert!(chain.next.is_none());
+        //@! Chain (task[2] + function + task[2])
+        //Add a function to runner
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        runner.function(&mut core, String::from("myfunc"), expression);
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        let command: Vec<String> = vec![String::from("echo"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And, //and between echo1 and echo 2
+        );
+        let command: Vec<String> = vec![String::from("myfunc"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And, //and between echo2 and myfunc
+        );
+        let command: Vec<String> = vec![String::from("cat"), String::from("/tmp/test.txt")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Or, //Or between myfunc and cat
+        );
+        let command: Vec<String> = vec![String::from("head"), String::from("-n"), String::from("1")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::Pipe,
+        );
+        let chain: TaskChain = runner.chain_task(&mut core, sample_task);
+        //Let's see if it's correct
+        assert!(chain.task.is_some());
+        assert!(chain.task.unwrap().next.is_some());
+        assert!(chain.function.is_none());
+        assert_eq!(chain.next_relation, TaskRelation::And);
+        assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
+        assert!(chain.next.is_some());
+        //Next is a function
+        let chain: TaskChain = *chain.next.unwrap();
+        assert!(chain.task.is_none());
+        assert!(chain.function.is_some());
+        assert_eq!(chain.function.as_ref().unwrap().args[0], String::from("myfunc"));
+        assert_eq!(chain.function.as_ref().unwrap().args[1], String::from("bar"));
+        assert_eq!(chain.next_relation, TaskRelation::Or);
+        assert_eq!(chain.prev_relation, TaskRelation::And);
+        assert!(chain.next.is_some());
+        //Next is a task
+        let chain: TaskChain = *chain.next.unwrap();
+        assert!(chain.task.is_some());
+        assert_eq!(chain.task.as_ref().unwrap().command[0], String::from("cat"));
+        assert!(chain.task.as_ref().unwrap().next.is_some());
+        assert!(chain.function.is_none());
+        assert_eq!(chain.next_relation, TaskRelation::Unrelated);
+        assert_eq!(chain.prev_relation, TaskRelation::Or);
+        assert!(chain.next.is_none());
+    }
+
     //TODO: exec
     //TODO: exec_history
     //TODO: exec_time
