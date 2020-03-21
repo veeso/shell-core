@@ -647,14 +647,15 @@ impl ShellRunner {
                         //Set exit flag
                         self.exit_flag = Some(255);
                     }
+                    return 1
                 }
                 operator1.pow(operator2 as u32)
             },
             MathOperator::ShiftLeft => {
-                operator1 >> operator2
+                operator1 << operator2
             },
             MathOperator::ShiftRight => {
-                operator1 << operator2
+                operator1 >> operator2
             },
             MathOperator::Subtract => {
                 operator1 - operator2
@@ -1231,6 +1232,154 @@ mod tests {
     //TODO: foreach
     //TODO: ifcond
     //TODO: let
+    #[test]
+    fn test_runner_let() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Quick maths
+        //And
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("34"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::And, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("32"));
+        //Divide
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("64"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Divide, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("2"));
+        //Divide by 0
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("0"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Divide, operator2), 1);
+        //Equal
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("16"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("16"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Equal, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
+        //Equal (but not equal)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("34"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Equal, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
+        //Module
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("64"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("24"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Module, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("16"));
+        //Multiply
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("4"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("8"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Multiply, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("32"));
+        //NotEqual
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("2"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("8"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::NotEqual, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
+        //NotEqual (but equal)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::NotEqual, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
+        //Or
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("16"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("4"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Or, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("20"));
+        //Power
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("2"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("3"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Power, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("8"));
+        //Power (negative power)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("2"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("-4"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Power, operator2), 1);
+        //Shift Left
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("4"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("8"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::ShiftLeft, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1024"));
+        //Right Shift
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("34"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::And, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("32"));
+        //Sum
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("5"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("5"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Sum, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("10"));
+        //Xor
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("32"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("4"))]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Xor, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("36"));
+    }
 
     #[test]
     fn test_runner_dirs() {
