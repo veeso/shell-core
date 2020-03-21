@@ -72,18 +72,20 @@ impl Task {
     /// ### truncate
     /// 
     /// Truncate Task pipeline at a certain index. The provided index will be of the first element removed from the pipeline
-    pub(crate) fn truncate(&mut self, index: usize) {
+    /// Returns the broken relation
+    pub(crate) fn truncate(&mut self, index: usize) -> TaskRelation {
         let t: &mut Task = self;
         let mut i: usize = 0;
         loop {
             if t.next.is_none() {
-                return;
+                return TaskRelation::Unrelated;
             }
             let t: &mut Task = &mut t.next.as_mut().unwrap();
             if i == index {
                 t.next = None; //Set next to None
+                let last_relation: TaskRelation = t.relation.clone();
                 t.relation = TaskRelation::Unrelated; //Set relation to unrelated
-                return;
+                return last_relation;
             }
             i = i + 1;
         }
@@ -366,9 +368,12 @@ mod tests {
         //Verify next is something
         assert!(task.next.is_some());
         //Reset next
-        task.truncate(2);
+        assert_eq!(task.truncate(2), TaskRelation::And);
         assert_eq!(task.relation, TaskRelation::And);
         assert!(task.next.is_some());
+        //Let's try to truncate again
+        assert_eq!(task.truncate(2), TaskRelation::Unrelated);
+        //Verify truncation
         let task: Task = *task.next.unwrap();
         assert_eq!(task.relation, TaskRelation::Unrelated);
         assert!(task.next.is_none());
