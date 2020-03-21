@@ -267,6 +267,7 @@ impl Process {
     /// ### pid
     ///
     /// Get process pid
+    #[allow(dead_code)]
     pub fn pid(&self) -> Option<u32> {
         self.process.pid()
     }

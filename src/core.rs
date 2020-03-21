@@ -111,6 +111,7 @@ impl ShellCore {
     /// ### alias_set
     /// 
     /// Set an alias in the current shell environment
+    /// Returns false if the alias name is not valid
     pub(crate) fn alias_set(&mut self, alias: String, command: String) -> bool {
         if ! self.is_alias_name_valid(&alias) {
             false
@@ -260,8 +261,14 @@ impl ShellCore {
     /// ### function_set
     /// 
     /// Set a new Shell Function
-    pub(crate) fn function_set(&mut self, name: String, expression: ShellExpression) {
-        self.functions.insert(name, expression);
+    /// Returns false if the function name is not valid
+    pub(crate) fn function_set(&mut self, name: String, expression: ShellExpression) -> bool {
+        if self.is_function_name_valid(&name) {
+            self.functions.insert(name, expression);
+            true
+        } else {
+            false
+        }
     }
 
     //@! Getters
@@ -618,6 +625,13 @@ impl ShellCore {
     fn is_alias_name_valid(&self, name: &String) -> bool {
         name.chars().all(char::is_alphanumeric)
     }
+
+    /// ### is_function_name_valid
+    /// 
+    /// Returns whether the function name is valid
+    fn is_function_name_valid(&self, name: &String) -> bool {
+        name.chars().nth(0).unwrap_or(0x00_u8.into()).is_ascii_alphabetic()
+    }
  
 }
 
@@ -778,9 +792,14 @@ mod tests {
             statements: vec![ShellStatement::Return(0)]
         };
         //Set function
-        core.function_set(String::from("testfunc"), test_function);
+        assert!(core.function_set(String::from("testfunc"), test_function));
         //Verify function exists
         assert!(core.function_get(&String::from("testfunc")).is_some());
+        //Try to insert an invalid function name
+        let test_function: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        assert!(! core.function_set(String::from("5loops"), test_function));
     }
 
     #[test]
