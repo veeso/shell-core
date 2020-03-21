@@ -28,7 +28,9 @@
 
 extern crate glob;
 
-use crate::{FileRedirectionType, Redirection, ShellCore, ShellError, ShellExpression, ShellRunner, ShellStream, ShellStreamMessage, TaskManager, Task, UserStreamMessage};
+use crate::{FileRedirectionType, MathError, MathOperator, Redirection};
+use crate::{ShellCore, ShellError, ShellExpression, ShellRunner, ShellStatement, ShellStream, ShellStreamMessage};
+use crate::{TaskManager, Task, UserStreamMessage};
 use crate::tasks::{TaskError, TaskErrorCode, TaskMessageRx, TaskMessageTx, TaskRelation};
 
 use glob::glob;
@@ -421,9 +423,19 @@ impl ShellRunner {
     /// ### export
     /// 
     /// Export a variable in the environment
-    fn export(&mut self, core: &mut ShellCore, key: String, value: ShellExpression) {
+    fn export(&mut self, core: &mut ShellCore, key: String, value: ShellExpression) -> u8 {
         let (_, value): (u8, String) = self.run_expression(core, value);
-        core.environ_set(key, value);
+        match core.environ_set(key.clone(), value) {
+            true => 0,
+            false => {
+                //Report error
+                if ! core.sstream.send(ShellStreamMessage::Error(ShellError::BadValue(key))) {
+                    //Set exit flag
+                    self.exit_flag = Some(255);
+                }
+                1
+            }
+        }
     }
 
     /// ### foreach
@@ -462,7 +474,89 @@ impl ShellRunner {
         }
     }
 
-    //TODO: let statement
+    /// ### let_perform
+    /// 
+    /// Perform let statement
+    fn let_perform(&mut self, core: &mut ShellCore, dest: String, operator1: ShellExpression, operation: MathOperator, operator2: ShellExpression) -> u8 {        
+        //Get output for operator 1
+        let (_, output): (u8, String) = self.run_expression(core, operator1);
+        //Try to convert output to number
+        let operator1: isize = output.parse::<isize>().unwrap_or(0);
+        //Get output for operator 2
+        let (_, output): (u8, String) = self.run_expression(core, operator2);
+        //Try to convert output to number
+        let operator2: isize = output.parse::<isize>().unwrap_or(0);
+        //Perform math expression
+        let result: isize = match operation {
+            MathOperator::And => {
+                operator1 & operator2
+            },
+            MathOperator::Divide => {
+                if operator2 == 0 { //Report error if dividing by 0
+                    if ! core.sstream.send(ShellStreamMessage::Error(ShellError::Math(MathError::DividedByZero))) {
+                        //Set exit flag
+                        self.exit_flag = Some(255);
+                    }
+                    return 1
+                } else {
+                    operator1 / operator2
+                }
+            },
+            MathOperator::Equal => {
+                (operator1 == operator2) as isize
+            },
+            MathOperator::Module => {
+                if operator2 == 0 { //Report error if dividing by 0
+                    if ! core.sstream.send(ShellStreamMessage::Error(ShellError::Math(MathError::DividedByZero))) {
+                        //Set exit flag
+                        self.exit_flag = Some(255);
+                    }
+                    return 1
+                } else {
+                    operator1 % operator2
+                }
+            },
+            MathOperator::Multiply => {
+                operator1 * operator2
+            },
+            MathOperator::NotEqual => {
+                (operator1 != operator2) as isize
+            },
+            MathOperator::Or => {
+                operator1 | operator2
+            },
+            MathOperator::Power => {
+                if operator2 < 0 {
+                    if ! core.sstream.send(ShellStreamMessage::Error(ShellError::Math(MathError::NegativePower))) {
+                        //Set exit flag
+                        self.exit_flag = Some(255);
+                    }
+                }
+                operator1.pow(operator2 as u32)
+            },
+            MathOperator::ShiftLeft => {
+                operator1 >> operator2
+            },
+            MathOperator::ShiftRight => {
+                operator1 << operator2
+            },
+            MathOperator::Subtract => {
+                operator1 - operator2
+            },
+            MathOperator::Sum => {
+                operator1 + operator2
+            },
+            MathOperator::Xor => {
+                operator1 ^ operator2
+            }
+        };
+        //Build set expression
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(result.to_string())]
+        };
+        //Return exitcode for set
+        self.set(core, dest, expression)
+    }
 
     /// ### popd_back
     /// 
@@ -559,9 +653,19 @@ impl ShellRunner {
     /// ### set
     /// 
     /// Set a key with its associated value in the Shell session storage
-    fn set(&mut self, core: &mut ShellCore, key: String, value: ShellExpression) {
+    fn set(&mut self, core: &mut ShellCore, key: String, value: ShellExpression) -> u8 {
         let (_, value): (u8, String) = self.run_expression(core, value);
-        core.storage_set(key, value);
+        match core.storage_set(key.clone(), value) {
+            true => 0,
+            false => {
+                //Report error
+                if ! core.sstream.send(ShellStreamMessage::Error(ShellError::BadValue(key))) {
+                    //Set exit flag
+                    self.exit_flag = Some(255);
+                }
+                1
+            }
+        }
     }
 
     /// ### source
