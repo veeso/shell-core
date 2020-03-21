@@ -124,6 +124,7 @@ pub struct ShellExpression {
 /// - Exit: exit from expression
 /// - Export: export a variable into environ
 /// - For: For(String, Condition, Perform) iterator String: key name
+/// - Function: defines a new function (Name, expression)
 /// - If: If(Condition, Then, Else) condition
 /// - Let: perform math operation to values Let(Result, operator1, operation, operator2)
 /// - Popd: Pop directory from stack
@@ -134,6 +135,7 @@ pub struct ShellExpression {
 /// - Source: source file
 /// - Task: execute task
 /// - Time: execute with time
+/// - Unalias: remove an alias
 /// - Value: simple value or key
 /// - While: While(Condition, Perform) iterator
 #[derive(Clone, std::fmt::Debug)]
@@ -149,6 +151,7 @@ pub enum ShellStatement {
     Exit(u8),
     Export(String, ShellExpression),
     For(String, ShellExpression, ShellExpression),
+    Function(String, ShellExpression),
     If(ShellExpression, ShellExpression, Option<ShellExpression>),
     Let(String, ShellExpression, MathOperator, ShellExpression),
     PopdBack,
@@ -159,37 +162,9 @@ pub enum ShellStatement {
     Set(String, ShellExpression),
     Source(PathBuf),
     Time(Task),
+    Unalias(String),
     Value(String),
     While(ShellExpression, ShellExpression)
-}
-
-/// ## MathOperator
-/// 
-/// Math operator is used by Let statement
-#[derive(Clone, PartialEq, std::fmt::Debug)]
-pub enum MathOperator {
-    And,
-    Divide,
-    Equal,
-    Module,
-    Multiply,
-    NotEqual,
-    Or,
-    Power,
-    ShiftLeft,
-    ShiftRight,
-    Subtract,
-    Sum,
-    Xor
-}
-
-/// ## MathError
-/// 
-/// MathError represents an error while performing some math operation
-#[derive(Clone, PartialEq, std::fmt::Debug)]
-pub enum MathError {
-    DividedByZero,
-    NegativePower
 }
 
 /// ## ShellRunner
@@ -261,6 +236,37 @@ pub enum Redirection {
     File(String, FileRedirectionType),
 }
 
+//@! Maths
+
+/// ## MathOperator
+/// 
+/// Math operator is used by Let statement
+#[derive(Clone, PartialEq, std::fmt::Debug)]
+pub enum MathOperator {
+    And,
+    Divide,
+    Equal,
+    Module,
+    Multiply,
+    NotEqual,
+    Or,
+    Power,
+    ShiftLeft,
+    ShiftRight,
+    Subtract,
+    Sum,
+    Xor
+}
+
+/// ## MathError
+/// 
+/// MathError represents an error while performing some math operation
+#[derive(Clone, PartialEq, std::fmt::Debug)]
+pub enum MathError {
+    DividedByZero,
+    NegativePower
+}
+
 //@! Parser
 
 /// ## ParserError
@@ -330,35 +336,35 @@ impl Clone for Redirection {
 /// The UnixSignal enums represents the UNIX signals
 #[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
 pub enum UnixSignal {
-    Sighup,
-    Sigint,
-    Sigquit,
-    Sigill,
-    Sigtrap,
-    Sigabrt,
-    Sigbus,
-    Sigfpe,
-    Sigkill,
-    Sigusr1,
-    Sigsegv,
-    Sigusr2,
-    Sigpipe,
-    Sigalrm,
-    Sigterm,
-    Sigstkflt,
-    Sigchld,
-    Sigcont,
-    Sigstop,
-    Sigtstp,
-    Sigttin,
-    Sigttou,
-    Sigurg,
-    Sigxcpu,
-    Sigxfsz,
-    Sigvtalrm,
-    Sigprof,
-    Sigwinch,
-    Sigio,
-    Sigpwr,
-    Sigsys
+    Sighup = 1,
+    Sigint = 2,
+    Sigquit = 3,
+    Sigill = 4,
+    Sigtrap = 5,
+    Sigabrt = 6,
+    Sigbus = 7,
+    Sigfpe = 8,
+    Sigkill = 9,
+    Sigusr1 = 10,
+    Sigsegv = 11,
+    Sigusr2 = 12,
+    Sigpipe = 13,
+    Sigalrm = 14,
+    Sigterm = 15,
+    Sigstkflt = 16,
+    Sigchld = 17,
+    Sigcont = 18,
+    Sigstop = 19,
+    Sigtstp = 20,
+    Sigttin = 21,
+    Sigttou = 22,
+    Sigurg = 23,
+    Sigxcpu = 24,
+    Sigxfsz = 25,
+    Sigvtalrm = 26,
+    Sigprof = 27,
+    Sigwinch = 28,
+    Sigio = 29,
+    Sigpwr = 30,
+    Sigsys = 31
 }
