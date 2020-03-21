@@ -603,6 +603,18 @@ impl ShellCore {
         }
     }
 
+    /// ### storage_arg_set
+    /// 
+    /// Set argument to storage; argument must be a number
+    pub(crate) fn storage_arg_set(&mut self, key: String, value: String) -> bool {
+        if ! self.is_arg_name_valid(&key) {
+            false
+        } else {
+            self.storage.insert(key, value);
+            true
+        }
+    }
+
     /// ### storage_unset
     /// 
     /// Unset a value from the storage
@@ -617,6 +629,13 @@ impl ShellCore {
     /// Checks whether a variable name is valid
     fn is_variable_name_valid(&self, key: &String) -> bool {
         key.chars().nth(0).unwrap_or(0x00_u8.into()).is_ascii_alphabetic()
+    }
+
+    /// ### is_variable_name_valid
+    /// 
+    /// Checks whether a variable name is valid
+    fn is_arg_name_valid(&self, key: &String) -> bool {
+        key.chars().all(char::is_numeric)
     }
 
     /// ### is_alias_name_valid
@@ -926,6 +945,10 @@ mod tests {
         assert!(! core.storage_set(String::from("/NAME"), String::from("FOO")));
         assert!(! core.environ_set(String::from("7YEARS"), String::from("FOO")));
         assert!(! core.environ_set(String::from("/NAME"), String::from("FOO")));
+        //Arguments
+        assert!(core.storage_arg_set(String::from("1"), String::from("HI")));
+        assert_eq!(core.storage_get(&String::from("1")).unwrap(), String::from("HI"));
+        assert!(! core.storage_arg_set(String::from("FOO"), String::from("HI")));
     }
 
     fn create_tmpfile() -> tempfile::NamedTempFile {
