@@ -310,8 +310,29 @@ impl ShellRunner {
                         break;
                     }
                 } else if let Some(func) = chain.function { //@! Functions
+                    //Prepare backup of tmp values
+                    let mut current_tmp_values: Vec<String> = Vec::with_capacity(func.args.len());
+                    //Set function arguments to storage
+                    for (index, arg) in func.args.iter().enumerate() {
+                        //Before setting new value, try to get current values. 
+                        //NOTE: If this function is nested into another execution, they will be set
+                        //Otherwise they won't, since at the end of this function, the values are freed
+                        if let Some(val) = core.value_get(&index.to_string()) {
+                            current_tmp_values.push(val);
+                        }
+                        core.storage_arg_set(index.to_string(), arg.clone());
+                    }
                     //Execute function
                     let (exitcode, out): (u8, String) = self.run_expression(core, func.expression);
+                    //remove arguments from storage
+                    for (index, _) in func.args.iter().enumerate() {
+                        core.value_unset(&index.to_string());
+                    }
+                    //Restore previous value if possible
+                    for (index, val) in current_tmp_values.iter().enumerate() {
+                        core.storage_arg_set(index.to_string(), val.clone());
+                    }
+                    //Push output to output and set rc
                     output.push_str(out.as_str());
                     rc = exitcode;
                     //Redirect output
