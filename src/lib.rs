@@ -95,6 +95,7 @@ pub enum ShellError {
     NoSuchAlias(String),        //Alias doesn't exist
     TaskError(TaskError),       //Error reported by task; please refer to task error
     Parser(ParserError),        //Error reported by the Parser
+    Math(MathError),            //Math error
     Other                       //Anything which is an undefined behaviour. This should never be raised
 }
 
@@ -163,13 +164,21 @@ pub enum ShellStatement {
 /// ## MathOperator
 /// 
 /// Math operator is used by Let statement
-#[derive(Clone, std::fmt::Debug)]
+#[derive(Clone, PartialEq, std::fmt::Debug)]
 pub enum MathOperator {
     Divide,
     Module,
     Multiply,
     Subtract,
     Sum
+}
+
+/// ## MathError
+/// 
+/// MathError represents an error while performing some math operation
+#[derive(Clone, PartialEq, std::fmt::Debug)]
+pub enum MathError {
+    DividedByZero
 }
 
 /// ## ShellRunner
