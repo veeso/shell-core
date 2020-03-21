@@ -93,6 +93,7 @@ pub enum ShellError {
     BadValue(String),           //Bad value error (e.g. bad variable name)
     OutOfHistoryRange,          //Out of History Range
     ShellNotInIdle,             //The shell must be in Idle state to perform this action
+    DirsStackEmpty,             //Directory stack is empty
     NoSuchAlias(String),        //Alias doesn't exist
     TaskError(TaskError),       //Error reported by task; please refer to task error
     Parser(ParserError),        //Error reported by the Parser

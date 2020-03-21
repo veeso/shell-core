@@ -92,9 +92,12 @@ impl ShellRunner {
     /// ### alias
     /// 
     /// Execute alias statement
-    fn alias(&mut self, core: &mut ShellCore, name: Option<String>, command: Option<String>) {
+    fn alias(&mut self, core: &mut ShellCore, name: Option<String>, command: Option<String>) -> u8 {
         if name.is_some() && command.is_some() {
-            core.alias_set(name.unwrap(), command.unwrap());
+            match core.alias_set(name.unwrap(), command.unwrap()) {
+                true => 0,
+                false => 1
+            }
         } else if name.is_some() && command.is_none() {
             //Send alias value
             match core.alias_get(name.as_ref().unwrap()) {
@@ -105,12 +108,14 @@ impl ShellRunner {
                     if ! core.sstream.send(ShellStreamMessage::Alias(alias_list)) {
                         self.exit_flag = Some(255);
                     }
+                    0
                 },
                 None => {
                     //Send err alias
                     if ! core.sstream.send(ShellStreamMessage::Error(ShellError::NoSuchAlias(name.unwrap().clone()))) {
                         self.exit_flag = Some(255);
                     }
+                    1
                 }
             }
         } else if name.is_none() && command.is_none() {
@@ -120,31 +125,38 @@ impl ShellRunner {
             if ! core.sstream.send(ShellStreamMessage::Alias(alias_list)) {
                 self.exit_flag = Some(255);
             }
+            0
+        } else {
+            1
         }
     }
 
     /// ### change_directory
     /// 
     /// Execute cd statement
-    fn change_directory(&mut self, core: &mut ShellCore, path: PathBuf) {
+    fn change_directory(&mut self, core: &mut ShellCore, path: PathBuf) -> u8 {
         if let Err(err) = core.change_directory(path) {
             //Send error
             if !core.sstream.send(ShellStreamMessage::Error(err)) {
                 //Set exit flag
                 self.exit_flag = Some(255);
             }
+            1
+        } else {
+            0
         }
     }
 
     /// ### dirs
     /// 
     /// Sends the directories in the core stack
-    fn dirs(&mut self, core: &mut ShellCore) {
+    fn dirs(&mut self, core: &mut ShellCore) -> u8 {
         let dirs: VecDeque<PathBuf> = core.dirs();
         if ! core.sstream.send(ShellStreamMessage::Dirs(dirs)) {
             //Set exit flag
             self.exit_flag = Some(255);
         }
+        0
     }
 
     /// ### exec
@@ -550,18 +562,17 @@ impl ShellRunner {
                 operator1 ^ operator2
             }
         };
-        //Build set expression
-        let expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(result.to_string())]
-        };
-        //Return exitcode for set
-        self.set(core, dest, expression)
+        //Store variable if possible
+        match core.storage_set(dest, result.to_string()) {
+            true => 0,
+            false => 1
+        }
     }
 
     /// ### popd_back
     /// 
     /// Execute popd_back statement. Returns the popped directory if exists
-    fn popd_back(&mut self, core: &mut ShellCore) {
+    fn popd_back(&mut self, core: &mut ShellCore) -> u8 {
         if let Some(dir) = core.popd_back() {
             let mut dirs: VecDeque<PathBuf> = VecDeque::with_capacity(1);
             dirs.push_back(dir);
@@ -569,13 +580,16 @@ impl ShellRunner {
                 //Set exit flag
                 self.exit_flag = Some(255);
             }
+            0
+        } else {
+            1
         }
     }
 
     /// ### popd_back
     /// 
     /// Execute popd_front statement. Returns the popped directory if exists
-    fn popd_front(&mut self, core: &mut ShellCore) {
+    fn popd_front(&mut self, core: &mut ShellCore) -> u8 {
         if let Some(dir) = core.popd_front() {
             let mut dirs: VecDeque<PathBuf> = VecDeque::with_capacity(1);
             dirs.push_back(dir);
@@ -583,23 +597,27 @@ impl ShellRunner {
                 //Set exit flag
                 self.exit_flag = Some(255);
             }
+            0
+        } else {
+            1
         }
     }
 
     /// ### pushd
     /// 
     /// Execute pushd statement.
-    fn pushd(&mut self, core: &mut ShellCore, dir: PathBuf) {
+    fn pushd(&mut self, core: &mut ShellCore, dir: PathBuf) -> u8 {
         core.pushd(dir);
         //Returns dir
         self.dirs(core);
+        0
     }
 
     /// ### read
     /// 
     /// Execute read statement, which means it waits for input until arrives; if the input has a maximum size, it gets cut to the maximum size
     /// The data read is exported to result_key or to REPLY if not provided
-    fn read(&mut self, core: &mut ShellCore, prompt: Option<String>, max_size: Option<usize>, result_key: Option<String>) {
+    fn read(&mut self, core: &mut ShellCore, prompt: Option<String>, max_size: Option<usize>, result_key: Option<String>) -> u8 {
         let prompt: String = match prompt {
             Some(p) => p,
             None => String::new()
@@ -623,28 +641,32 @@ impl ShellRunner {
                                 match max_size {
                                     None => {
                                         //Export variable to storage
-                                        core.storage_set(key, input.clone());
-                                        return;
+                                        match core.storage_set(key, input.clone()) {
+                                            true => return 0,
+                                            false => return 1
+                                        }
                                     },
                                     Some(size) => {
                                         let value: String = String::from(&input[..size]);
-                                        core.storage_set(key, value);
-                                        return;
+                                        match core.storage_set(key, value) {
+                                            true => return 0,
+                                            false => return 1
+                                        }
                                     }
                                 }
                             },
-                            UserStreamMessage::Kill => return,
-                            UserStreamMessage::Signal(_) => return,
+                            UserStreamMessage::Kill => return 1,
+                            UserStreamMessage::Signal(_) => return 1,
                             UserStreamMessage::Interrupt => {
                                 self.exit_flag = Some(255);
-                                return;
+                                return 1
                             }
                         }
                     }
                 },
                 Err(_) => {
                     self.exit_flag = Some(255);
-                    return;
+                    return 1
                 }
             }
         }
@@ -868,10 +890,10 @@ mod tests {
         //Verify alias doesn't exist
         assert!(core.alias_get(&String::from("ll")).is_none());
         //Set alias
-        runner.alias(&mut core, Some(String::from("ll")), Some(String::from("ls -l")));
+        assert_eq!(runner.alias(&mut core, Some(String::from("ll")), Some(String::from("ls -l"))), 0);
         assert!(core.alias_get(&String::from("ll")).is_some());
         //Let's get that alias
-        runner.alias(&mut core, Some(String::from("ll")), None);
+        assert_eq!(runner.alias(&mut core, Some(String::from("ll")), None), 0);
         //We should have received the alias in the ustream
         if let ShellStreamMessage::Alias(alias) = &ustream.receive().unwrap()[0] {
             assert_eq!(*alias.get(&String::from("ll")).unwrap(), String::from("ls -l"));
@@ -879,16 +901,16 @@ mod tests {
             panic!("Not an Alias");
         }
         //Let's get an alias which doesn't exist
-        runner.alias(&mut core, Some(String::from("foobar")), None);
+        assert_eq!(runner.alias(&mut core, Some(String::from("foobar")), None), 1);
         if let ShellStreamMessage::Error(err) = &ustream.receive().unwrap()[0] {
             assert_eq!(discriminant(err), discriminant(&ShellError::NoSuchAlias(String::from("foobar"))));
         } else {
             panic!("Not an error");
         }
         //Let's insert another alias
-        runner.alias(&mut core, Some(String::from("dirsize")), Some(String::from("du -hs")));
+        assert_eq!(runner.alias(&mut core, Some(String::from("dirsize")), Some(String::from("du -hs"))), 0);
         //Let's get all aliases
-        runner.alias(&mut core, None, None);
+        assert_eq!(runner.alias(&mut core, None, None), 0);
         if let ShellStreamMessage::Alias(alias) = &ustream.receive().unwrap()[0] {
             assert_eq!(*alias.get(&String::from("ll")).unwrap(), String::from("ls -l"));
             assert_eq!(*alias.get(&String::from("dirsize")).unwrap(), String::from("du -hs"));
@@ -897,7 +919,7 @@ mod tests {
         }
         //Drop ustream and fail alias get
         drop(ustream);
-        runner.alias(&mut core, Some(String::from("ll")), None);
+        assert_eq!(runner.alias(&mut core, Some(String::from("ll")), None), 0);
         assert!(runner.exit_flag.is_some());
         //Reset
         runner.exit_flag = None;
@@ -908,16 +930,18 @@ mod tests {
         runner.alias(&mut core, Some(String::from("ll")), Some(String::from("ls -l --color=auto")));
         //Verify alias changed actually
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
+        //Try to set a bad alias
+        assert_eq!(runner.alias(&mut core, Some(String::from("l/l")), Some(String::from("ls -l"))), 1);
     }
 
     #[test]
     fn test_runner_change_directory() {
         let mut runner: ShellRunner = ShellRunner::new();
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
-        runner.change_directory(&mut core, PathBuf::from("/tmp/"));
+        assert_eq!(runner.change_directory(&mut core, PathBuf::from("/tmp/")), 0);
         assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
         //Try to change directory to not existing path
-        runner.change_directory(&mut core, PathBuf::from("/onett/"));
+        assert_eq!(runner.change_directory(&mut core, PathBuf::from("/onett/")), 1);
         //Directory shouldn't have changed
         assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
         //Verify we received an error
@@ -928,7 +952,7 @@ mod tests {
         }
         //Drop ustream and change directory
         drop(ustream);
-        runner.change_directory(&mut core, PathBuf::from("/onett/"));
+        assert_eq!(runner.change_directory(&mut core, PathBuf::from("/onett/")), 1);
         assert!(runner.exit_flag.is_some());
     }
 
@@ -960,37 +984,32 @@ mod tests {
         let mut runner: ShellRunner = ShellRunner::new();
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Get dirs when empty
-        runner.dirs(&mut core);
+        assert_eq!(runner.dirs(&mut core), 0);
         if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
             assert_eq!(dirs.len(), 1); //Contains home
         } else {
             panic!("Not a dirs");
         }
         //Push directory
-        runner.pushd(&mut core, PathBuf::from("/tmp/"));
+        assert_eq!(runner.pushd(&mut core, PathBuf::from("/tmp/")), 0);
         if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
             assert_eq!(dirs.len(), 2); //Contains home and tmp
         } else {
             panic!("Not a dirs");
         }
         //Popd
-        runner.popd_back(&mut core);
+        assert_eq!(runner.popd_back(&mut core), 0);
         if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
             assert_eq!(dirs.len(), 1); //Contains home and tmp
             assert_eq!(*dirs[0], core.get_home());
         } else {
             panic!("Not a dirs");
         }
-        runner.popd_front(&mut core);
-        if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
-            assert_eq!(dirs.len(), 1); //Contains home and tmp
-            assert_eq!(*dirs[0], PathBuf::from("/tmp/"));
-        } else {
-            panic!("Not a dirs");
-        }
+        //You can't empty directory stack, so 1 will be returned
+        assert_eq!(runner.popd_front(&mut core),1);
         runner.dirs(&mut core);
         if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
-            assert_eq!(dirs.len(), 0); //Contains none
+            assert_eq!(dirs.len(), 1); //Contains still one
         } else {
             panic!("Not a dirs");
         }
@@ -1003,7 +1022,7 @@ mod tests {
         //Send input before read, otherwise will block
         assert!(ustream.send(UserStreamMessage::Input(String::from("HI_THERE"))));
         //Read
-        runner.read(&mut core, Some(String::from("type something")), Some(5), Some(String::from("OUTPUT")));
+        assert_eq!(runner.read(&mut core, Some(String::from("type something")), Some(5), Some(String::from("OUTPUT"))), 0);
         //Prompt is shown
         if let ShellStreamMessage::Output((stdout, stderr)) = &ustream.receive().unwrap()[0] {
             //Must be prompt
@@ -1027,15 +1046,15 @@ mod tests {
         //Let's try terminate, kill and other stuff
         core.value_unset(&String::from("REPLY"));
         assert!(ustream.send(UserStreamMessage::Kill));
-        runner.read(&mut core, None, None, None);
+        assert_eq!(runner.read(&mut core, None, None, None), 1);
         //Nothing to display
         assert!(core.value_get(&String::from("REPLY")).is_none());
         assert!(ustream.send(UserStreamMessage::Interrupt));
-        runner.read(&mut core, None, None, None);
+        assert_eq!(runner.read(&mut core, None, None, None), 1);
         //Nothing to display
         assert!(core.value_get(&String::from("REPLY")).is_none());
         assert!(ustream.send(UserStreamMessage::Signal(UnixSignal::Sigint)));
-        runner.read(&mut core, None, None, None);
+        assert_eq!(runner.read(&mut core, None, None, None), 1);
         //Nothing to display
         assert!(core.value_get(&String::from("REPLY")).is_none());
     }
