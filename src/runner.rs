@@ -525,7 +525,6 @@ impl ShellRunner {
             }
         }
         //Return chain
-        println!("TASK: {:?}", chain);
         chain.unwrap()
     }
 
@@ -574,12 +573,12 @@ impl ShellRunner {
     /// ### foreach
     /// 
     /// Perform a for statement
-    fn foreach(&mut self, core: &mut ShellCore, key: String, condition: ShellExpression, expression: ShellExpression) -> u8 {
+    fn foreach(&mut self, core: &mut ShellCore, key: String, condition: ShellExpression, expression: ShellExpression) -> Option<u8> {
         //Get result of condition
-        let mut exitcode: u8 = 0;
+        let mut exitcode: Option<u8> = None;
         let (rc, output): (u8, String) = self.run_expression(core, condition);
         if rc != 0 {
-            return 255;
+            return Some(1);
         }
         //Iterate over output split by whitespace
         for i in output.split_whitespace() {
@@ -587,7 +586,7 @@ impl ShellRunner {
             core.storage_set(key.clone(), i.to_string());
             //Execute expression
             let (rc, _): (u8, String) = self.run_expression(core, expression.clone());
-            exitcode = rc;
+            exitcode = Some(rc);
         }
         //Remove key from storage
         core.value_unset(&key);
@@ -960,7 +959,9 @@ impl ShellRunner {
                     rc = self.export(core, key.clone(), value.clone());
                 },
                 ShellStatement::For(what, when, perform) => {
-                    rc = self.foreach(core, what.clone(), when.clone(), perform.clone());
+                    if let Some(exitcode) = self.foreach(core, what.clone(), when.clone(), perform.clone()) {
+                        rc = exitcode;
+                    }
                 },
                 ShellStatement::Function(name, expression) => {
                     rc = self.function(core, name.clone(), expression.clone());
@@ -1004,7 +1005,6 @@ impl ShellRunner {
                 },
                 ShellStatement::Value(val) => {
                     output = self.eval_value(core, val.clone());
-                    rc = 0;
                 },
                 ShellStatement::While(until, perform) => {
                     rc = self.while_loop(core, until.clone(), perform.clone());
@@ -1139,6 +1139,7 @@ mod tests {
     use crate::UserStream;
     use crate::UnixSignal;
 
+    use std::fs::File;
     use std::mem::discriminant;
     use std::mem::drop;
 
@@ -1410,6 +1411,60 @@ mod tests {
     }
     
     //TODO: foreach
+    #[test]
+    fn test_runner_foreach() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Let's create a temp dir with 4 files in it
+        let (tmpdir, files): (tempfile::TempDir, Vec<String>) = create_tmp_dir_with_files(4);
+        let file_case: String = format!("{}/*", tmpdir.path().display());
+        //Prepare foreach
+        let iterator: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(file_case)]
+        };
+        let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
+        let foreach_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(foreach_task)]
+        };
+        //This for each will store each file contained in tmpdir into FILE; then for each entry echo $FILE will be performed
+        assert_eq!(runner.foreach(&mut core, String::from("FILE"), iterator, foreach_perform).unwrap(), 0);
+        //We should receive 4 messages in ustream
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        assert_eq!(inbox.len(), 4);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                let mut filename: String = stdout.as_ref().unwrap().clone();
+                filename.pop(); //Remove newline
+                //Verify filename is the same
+                assert_eq!(filename, files[index].to_string());
+            } else {
+                panic!("Not an output message");
+            }
+        }
+        //Foreach in empty directory
+        let tmpdir: tempfile::TempDir = create_tmp_dir();
+        let file_case: String = format!("{}/*", tmpdir.path().display());
+        //Prepare foreach
+        let iterator: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(file_case)]
+        };
+        let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
+        let foreach_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(foreach_task)]
+        };
+        //Must be None since there's no file in it
+        assert!(runner.foreach(&mut core, String::from("FILE"), iterator, foreach_perform).is_none());
+        //Foreach in not existing directory
+        let iterator: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("/tmp/thisdirectorydoesnotexist/*"))]
+        };
+        let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
+        let foreach_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(foreach_task)]
+        };
+        //Must be None, directory doesn't exist
+        assert!(runner.foreach(&mut core, String::from("FILE"), iterator, foreach_perform).is_none());
+    }
 
     #[test]
     fn test_runner_ifcond() {
@@ -1803,6 +1858,23 @@ mod tests {
         assert_eq!(next.prev_relation, TaskRelation::Or);
         assert_eq!(next.next_relation, TaskRelation::Unrelated);
         assert!(next.next.is_none());
+    }
+
+    //@! Utils
+    fn create_tmp_dir_with_files(amount: usize) -> (tempfile::TempDir, Vec<String>) {
+        let tmpdir: tempfile::TempDir = tempfile::TempDir::new().unwrap();
+        let mut files: Vec<String> = Vec::with_capacity(amount);
+        for i in 0..amount {
+            let filename: String = format!("{}/file_{}.txt", tmpdir.path().display(), i.to_string());
+            files.push(filename.clone());
+            let mut file = File::create(filename).unwrap();
+            let _ = file.write_all(b"Hello World!");
+        }
+        (tmpdir, files)
+    }
+
+    fn create_tmp_dir() -> tempfile::TempDir {
+        tempfile::TempDir::new().unwrap()
     }
 
 }
