@@ -145,3 +145,16 @@ impl Clone for TaskError {
         TaskError::new(self.code, self.message.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_task_error_clone() {
+        let error: TaskError = TaskError::new(TaskErrorCode::AlreadyRunning, String::from("HELLO"));
+        assert_eq!(error.code, TaskErrorCode::AlreadyRunning);
+        assert_eq!(error.message, String::from("HELLO"));
+    }
+}

@@ -452,6 +452,8 @@ mod tests {
         assert!(task.kill().is_ok());
         //Verify process terminated
         assert!(!task.is_running());
+        //Try to write when the process has already terminated
+        assert!(task.write(String::from("hi there!\n")).is_err());
         //Exit code should be 9
         assert_eq!(task.get_exitcode().unwrap(), 9);
     }
