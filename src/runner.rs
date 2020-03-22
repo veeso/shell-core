@@ -607,19 +607,20 @@ impl ShellRunner {
     /// ### ifcond
     /// 
     /// Perform if statement
-    fn ifcond(&mut self, core: &mut ShellCore, condition: ShellExpression, if_perform: ShellExpression, else_perform: Option<ShellExpression>) -> u8 {
+    /// None is returned if no statement is executed
+    fn ifcond(&mut self, core: &mut ShellCore, condition: ShellExpression, if_perform: ShellExpression, else_perform: Option<ShellExpression>) -> Option<u8> {
         //Get result of condition
-        let mut exitcode: u8 = 0;
+        let mut exitcode: Option<u8> = None;
         let (rc, _): (u8, String) = self.run_expression(core, condition);
         //If rc is 0 => execute if perform
         if rc == 0 {
             //Execute expression
             let (rc, _) = self.run_expression(core, if_perform);
-            exitcode = rc;
+            exitcode = Some(rc);
         } else if let Some(else_perform) = else_perform {
             //Perform else if set
             let (rc, _) = self.run_expression(core, else_perform);
-            exitcode = rc;
+            exitcode = Some(rc);
         }
         exitcode
     }
@@ -965,7 +966,9 @@ impl ShellRunner {
                     rc = self.function(core, name.clone(), expression.clone());
                 },
                 ShellStatement::If(what, perform_if, perform_else) => {
-                    rc = self.ifcond(core, what.clone(), perform_if.clone(), perform_else.clone());
+                    if let Some(exitcode) = self.ifcond(core, what.clone(), perform_if.clone(), perform_else.clone()) {
+                        rc = exitcode;
+                    }
                 },
                 ShellStatement::Let(dest, operator1, operation, operator2) => {
                     rc = self.let_perform(core, dest.clone(), operator1.clone(), operation.clone(), operator2.clone());
@@ -1407,7 +1410,41 @@ mod tests {
     }
     
     //TODO: foreach
-    //TODO: ifcond
+
+    #[test]
+    fn test_runner_ifcond() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Let's try a simple if case without else
+        let if_expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)] //This is OK, since returns 0
+        };
+        let if_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(42)]
+        };
+        assert_eq!(runner.ifcond(&mut core, if_expression, if_perform, None).unwrap(), 42);
+        //Let's try a simple if case without else, but if condition is false
+        let if_expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(1)] //This is Nok, since returns 1
+        };
+        let if_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(42)]
+        };
+        //Exitcode will be None
+        assert!(runner.ifcond(&mut core, if_expression, if_perform, None).is_none());
+        //Let's try a case with else, else is performed this time
+        let if_expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(1)] //This is Nok, since returns 1
+        };
+        let if_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(42)]
+        };
+        let else_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(128)]
+        };
+        assert_eq!(runner.ifcond(&mut core, if_expression, if_perform, Some(else_perform)).unwrap(), 128);
+    }
+
     #[test]
     fn test_runner_let() {
         let mut runner: ShellRunner = ShellRunner::new();
