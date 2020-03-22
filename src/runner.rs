@@ -897,8 +897,8 @@ impl ShellRunner {
     /// ### while_loop
     /// 
     /// Perform While shell statement
-    fn while_loop(&mut self, core: &mut ShellCore, condition: ShellExpression, expression: ShellExpression) -> u8 {
-        let mut exitcode: u8 = 0;
+    fn while_loop(&mut self, core: &mut ShellCore, condition: ShellExpression, expression: ShellExpression) -> Option<u8> {
+        let mut exitcode: Option<u8> = None;
         loop {
             let (rc, _): (u8, String) = self.run_expression(core, condition.clone());
             if rc != 0 { //If rc is NOT 0, break
@@ -906,7 +906,7 @@ impl ShellRunner {
             }
             //Otherwise perform expression
             let (rc, _) = self.run_expression(core, expression.clone());
-            exitcode = rc;
+            exitcode = Some(rc);
         }
         exitcode
     }
@@ -1007,7 +1007,9 @@ impl ShellRunner {
                     output = self.eval_value(core, val.clone());
                 },
                 ShellStatement::While(until, perform) => {
-                    rc = self.while_loop(core, until.clone(), perform.clone());
+                    if let Some(exitcode) = self.while_loop(core, until.clone(), perform.clone()) {
+                        rc = exitcode;
+                    }
                 }
             }
             //look for inputs
@@ -1410,7 +1412,6 @@ mod tests {
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("5"));
     }
     
-    //TODO: foreach
     #[test]
     fn test_runner_foreach() {
         let mut runner: ShellRunner = ShellRunner::new();
@@ -1754,7 +1755,54 @@ mod tests {
     }
 
     //TODO: source
-    //TODO: while
+
+    #[test]
+    fn test_runner_while() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Set value to 0
+        core.storage_set(String::from("VALUE"), String::from("0"));
+        //Prepare while (while [ $VALUE -ne 4 ]); do echo $VALUE; let VALUE=VALUE+1; done)
+        let while_condition_task: Task = Task::new(vec![String::from("["), String::from("$VALUE"), String::from("-ne"), String::from("4"), String::from("]")], Redirection::Stdout, Redirection::Stderr);
+        let while_condition: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(while_condition_task)] 
+        };
+        let echo_value_task: Task = Task::new(vec![String::from("echo"), String::from("$VALUE")], Redirection::Stdout, Redirection::Stderr);
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("$VALUE"))]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("1"))]
+        };
+        let while_perform: ShellExpression = ShellExpression { //Echo value; let value=value+1
+            statements:vec![ShellStatement::Exec(echo_value_task), ShellStatement::Let(String::from("VALUE"), operator1, MathOperator::Sum, operator2)]
+        };
+        //Run while loop
+        assert_eq!(runner.while_loop(&mut core, while_condition, while_perform).unwrap(), 0);
+        //Verify we've received for outputs
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        assert_eq!(inbox.len(), 4);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                let mut value: String = stdout.as_ref().unwrap().clone();
+                value.pop(); //Remove newline
+                //Verify value is the same
+                assert_eq!(value, index.to_string());
+            } else {
+                panic!("Not an output message");
+            }
+        }
+        
+        //Let's try a while with no cases
+        let while_condition: ShellExpression = ShellExpression { //This will never run
+            statements: vec![ShellStatement::Return(1)]
+        };
+        let while_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(42)]
+        };
+        //While result will be None
+        assert!(runner.while_loop(&mut core, while_condition, while_perform).is_none());
+    }
     //TODO: test run
 
     #[test]
