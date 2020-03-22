@@ -278,18 +278,6 @@ pub struct ParserError {
     pub message: String,
 }
 
-impl ParserError {
-    /// ## new
-    ///
-    /// Instantiate a new Task Error struct
-    pub(crate) fn new(code: ParserErrorCode, message: String) -> ParserError {
-        ParserError {
-            code: code,
-            message: message,
-        }
-    }
-}
-
 /// ## ParserErrorCode
 ///
 /// The parser error code describes in a generic way the error type

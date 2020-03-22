@@ -26,3 +26,31 @@
 //
 
 pub mod bash;
+
+use crate::ParserError;
+use crate::ParserErrorCode;
+
+impl ParserError {
+    /// ## new
+    ///
+    /// Instantiate a new Task Error struct
+    pub(crate) fn new(code: ParserErrorCode, message: String) -> ParserError {
+        ParserError {
+            code: code,
+            message: message,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_parser_error_new() {
+        let error: ParserError = ParserError::new(ParserErrorCode::BadToken, String::from("Bad token at row 0, column 12"));
+        assert_eq!(error.code, ParserErrorCode::BadToken);
+        assert_eq!(error.message, String::from("Bad token at row 0, column 12"));
+    }
+}
