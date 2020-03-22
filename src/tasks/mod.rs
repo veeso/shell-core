@@ -156,5 +156,8 @@ mod tests {
         let error: TaskError = TaskError::new(TaskErrorCode::AlreadyRunning, String::from("HELLO"));
         assert_eq!(error.code, TaskErrorCode::AlreadyRunning);
         assert_eq!(error.message, String::from("HELLO"));
+        let error_clone: TaskError = error.clone();
+        assert_eq!(error.code, error_clone.code);
+        assert_eq!(error.message, error_clone.message);
     }
 }
