@@ -154,8 +154,9 @@ impl ShellRunner {
     /// ### case
     /// 
     /// Perform case statement
-    fn case(&mut self, core: &mut ShellCore, what: ShellExpression, cases: Vec<(ShellExpression, ShellExpression)>) -> u8 {
-        let mut exitcode: u8 = 0;
+    /// Case may return None if nothing has been matched
+    fn case(&mut self, core: &mut ShellCore, what: ShellExpression, cases: Vec<(ShellExpression, ShellExpression)>) -> Option<u8> {
+        let mut exitcode: Option<u8> = None;
         let (_, output): (u8, String) = self.run_expression(core, what);
         //Output in
         for case in cases.iter() {
@@ -163,7 +164,7 @@ impl ShellRunner {
             //If case match is equal to output, execute case perform
             if case_match == output || case_match == "\\*" {
                 let (rc, _): (u8, String) = self.run_expression(core, case.1.clone());
-                exitcode = rc;
+                exitcode = Some(rc);
                 break; //Stop iterating
             }
         }
@@ -929,7 +930,9 @@ impl ShellRunner {
                     break; //Stop iterating
                 },
                 ShellStatement::Case(what, cases) => {
-                    rc = self.case(core, what.clone(), cases.clone());
+                    if let Some(exitcode) = self.case(core, what.clone(), cases.clone()) {
+                        rc = exitcode;
+                    }
                 },
                 ShellStatement::Cd(path) => {
                     rc = self.change_directory(core, path.clone());
@@ -1201,6 +1204,62 @@ mod tests {
         assert_eq!(core.alias_get(&String::from("ll")).unwrap(), String::from("ls -l --color=auto"));
         //Try to set a bad alias
         assert_eq!(runner.alias(&mut core, Some(String::from("l/l")), Some(String::from("ls -l"))), 1);
+    }
+
+    #[test]
+    fn test_runner_case() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Let's build our case statement - In this case 2 will be matched
+        let case_match: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("2"))]
+        };
+        let case0: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("0"))]
+        };
+        let case0_action: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        let case1: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("0"))]
+        };
+        let case1_action: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(1)]
+        };
+        let case2: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("2"))]
+        };
+        let case2_action: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(2)]
+        };
+        let case_any: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("\\*"))]
+        };
+        let case_any_action: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(255)]
+        };
+        let cases: Vec<(ShellExpression, ShellExpression)> = vec![(case0, case0_action), (case1, case1_action), (case2, case2_action), (case_any, case_any_action)];
+        //Perform case
+        //We expect 2 as rc, since the case 2 returns 2
+        assert_eq!(runner.case(&mut core, case_match, cases.clone()).unwrap(), 2);
+        //Let's try any case match (using value 40)
+        let case_match: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("40"))]
+        };
+        //We expect 255 as rc, since should match any case
+        assert_eq!(runner.case(&mut core, case_match, cases.clone()).unwrap(), 255);
+        //Let's try an unmatched case
+        let case0: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("0"))]
+        };
+        let case0_action: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        let cases: Vec<(ShellExpression, ShellExpression)> = vec![(case0, case0_action)];
+        let case_match: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("1"))]
+        };
+        assert!(runner.case(&mut core, case_match, cases).is_none());
     }
 
     #[test]
