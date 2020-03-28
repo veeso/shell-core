@@ -73,7 +73,8 @@ impl ShellRunner {
     pub(crate) fn new() -> ShellRunner {
         ShellRunner {
             buffer: None,
-            exit_flag: None
+            exit_flag: None,
+            break_loop: false
         }
     }
 
@@ -591,6 +592,10 @@ impl ShellRunner {
             //Execute expression
             let (rc, _): (u8, String) = self.run_expression(core, expression.clone());
             exitcode = Some(rc);
+            if self.break_loop {
+                self.break_loop = false;
+                break;
+            }
         }
         //Remove key from storage
         core.value_unset(&key);
@@ -911,6 +916,10 @@ impl ShellRunner {
             //Otherwise perform expression
             let (rc, _) = self.run_expression(core, expression.clone());
             exitcode = Some(rc);
+            if self.break_loop {
+                self.break_loop = false;
+                break;
+            }
         }
         exitcode
     }
@@ -931,6 +940,7 @@ impl ShellRunner {
                     rc = self.alias(core, name.clone(), cmd.clone());
                 },
                 ShellStatement::Break => {
+                    self.break_loop = true;
                     break; //Stop iterating
                 },
                 ShellStatement::Case(what, cases) => {
@@ -1905,7 +1915,7 @@ mod tests {
         let file_case: String = format!("{}/*", tmpdir.path().display());
         //Prepare foreach
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(file_case)]
+            statements: vec![ShellStatement::Value(file_case.clone())]
         };
         let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
         let foreach_perform: ShellExpression = ShellExpression {
@@ -1926,12 +1936,18 @@ mod tests {
                 panic!("Not an output message");
             }
         }
+        //Test with break
+        //Prepare foreach
+        let iterator: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(file_case)]
+        };
+        assert_eq!(runner.foreach(&mut core, String::from("FILE"), iterator, ShellExpression {statements: vec![ShellStatement::Break]}).unwrap(), 0);
         //Foreach in empty directory
         let tmpdir: tempfile::TempDir = create_tmp_dir();
         let file_case: String = format!("{}/*", tmpdir.path().display());
         //Prepare foreach
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(file_case)]
+            statements: vec![ShellStatement::Value(file_case.clone())]
         };
         let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
         let foreach_perform: ShellExpression = ShellExpression {
