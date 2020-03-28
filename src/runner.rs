@@ -1791,8 +1791,77 @@ mod tests {
         assert_eq!(inbox.len(), 0);
     }
 
-    //TODO: exec_history
-    //TODO: exec_time
+    #[test]
+    fn test_runner_history() {
+        //TODO: requires readline
+        /*
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Push entry to history
+        core.history_push(String::from("echo foobar"));
+        assert_eq!(runner.exec_history(&mut core, 0), 0);
+        //One output
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+
+        //Try to exec unexisting history entry
+        assert_eq!(runner.exec_history(&mut core, 0), 128);
+        //One output
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Error(err) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+        */
+    }
+
+    #[test]
+    fn test_runner_exec_time() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec_time(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HELLO WORLD"));
+        //One output
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 2);
+        for (index, message) in inbox.iter().enumerate() {
+            if index == 0 {
+                if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                    assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n"));
+                } else {
+                    panic!("Not an output");
+                }
+            } else if index == 1 {
+                if let ShellStreamMessage::Time(time) = message {
+                    assert!(time.as_millis() < 1000 && time.as_millis() > 0);
+                } else {
+                    panic!("Not a time");
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_runner_exit() {
@@ -2169,7 +2238,7 @@ mod tests {
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("5"));
     }
 
-    //TODO: source
+    //TODO: source (requires readline)
 
     #[test]
     fn test_runner_while() {
@@ -2218,7 +2287,14 @@ mod tests {
         //While result will be None
         assert!(runner.while_loop(&mut core, while_condition, while_perform).is_none());
     }
-    //TODO: test run
+
+    #[test]
+    fn test_runner_run() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        //Instantiate cores
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/bin/")), 128, Box::new(Bash {}));
+        //TODO: implement
+    }
 
     #[test]
     fn test_runner_eval_values() {

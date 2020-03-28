@@ -347,7 +347,7 @@ impl ShellCore {
     /// 
     /// Push a new entry to the history.
     /// The entry is stored at the front of the history. The first the newest
-    fn history_push(&mut self, expression: String) {
+    pub(crate) fn history_push(&mut self, expression: String) {
         //Check if history overflows the size
         let history_size: usize = (self.history.capacity() + 1) / 2;
         if self.history.len() + 1 > history_size {
