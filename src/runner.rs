@@ -2302,14 +2302,189 @@ mod tests {
         };
         //While result will be None
         assert!(runner.while_loop(&mut core, while_condition, while_perform).is_none());
+        //Try while with Break (Mustn't block)
+        assert_eq!(runner.while_loop(&mut core, ShellExpression {statements: vec![ShellStatement::Return(0)]}, ShellExpression {statements: vec![ShellStatement::Break]}).unwrap(), 0);
     }
 
     #[test]
     fn test_runner_run() {
         let mut runner: ShellRunner = ShellRunner::new();
         //Instantiate cores
-        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/bin/")), 128, Box::new(Bash {}));
-        //TODO: implement
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Prepare environment to run
+        //Prepare case
+        //Let's try an unmatched case
+        let case0: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("0"))]
+        };
+        let case0_action: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        let cases: Vec<(ShellExpression, ShellExpression)> = vec![(case0, case0_action)];
+        let case_match: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(String::from("1"))]
+        };
+        //Foreach
+        //Let's create a temp dir with 2 files in it
+        let (tmpdir, files): (tempfile::TempDir, Vec<String>) = create_tmp_dir_with_files(2);
+        let file_case: String = format!("{}/*", tmpdir.path().display());
+        //Prepare foreach
+        let iterator: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Value(file_case)]
+        };
+        let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
+        let foreach_perform: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(foreach_task)]
+        };
+        //Push entry to history
+        core.history_push(String::from("echo foobar"));
+        //Send input (readline)
+        ustream.send(UserStreamMessage::Input(String::from("INPUT\n")));
+        //Prepare an expression with all the statements
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![
+                ShellStatement::Read(Some(String::from(">>")), None, None), //Read as first to not interfere with exec
+                ShellStatement::Alias(Some(String::from("ll")), Some(String::from("ls -l"))),
+                ShellStatement::Case(case_match, cases),
+                ShellStatement::Cd(PathBuf::from("/tmp/")),
+                ShellStatement::Continue,
+                ShellStatement::Dirs,
+                ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("HELLO")], Redirection::Stdout, Redirection::Stderr)),
+                //ShellStatement::ExecHistory(0) TODO: requires readline
+                ShellStatement::Export(String::from("MYKEY"), ShellExpression {statements: vec![ShellStatement::Value(String::from("MYVALUE"))]}),
+                ShellStatement::For(String::from("FILE"), iterator, foreach_perform),
+                ShellStatement::Function(String::from("myecho"), ShellExpression { statements: vec![ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr))]}),
+                ShellStatement::If(ShellExpression {statements: vec![ShellStatement::Value(String::from("1"))]}, ShellExpression {statements: vec![ShellStatement::Return(0)]}, None),
+                ShellStatement::Let(String::from("RESULT"), ShellExpression {statements: vec![ShellStatement::Value(String::from("5"))]}, MathOperator::Sum, ShellExpression {statements: vec![ShellStatement::Value(String::from("2"))]}),
+                ShellStatement::Pushd(PathBuf::from("/tmp/")),
+                ShellStatement::Pushd(PathBuf::from("/sbin/")),
+                ShellStatement::PopdBack,
+                ShellStatement::PopdFront,
+                ShellStatement::Set(String::from("YOURKEY"), ShellExpression {statements: vec![ShellStatement::Value(String::from("YOURVALUE"))]}),
+                //ShellStatement::Source(PathBuf::from("/tmp/stuff.sh")), TODO: requires readline
+                ShellStatement::Time(Task::new(vec![String::from("echo"), String::from("TIME")], Redirection::Stdout, Redirection::Stderr)),
+                ShellStatement::Unalias(String::from("ll")),
+                ShellStatement::While(ShellExpression {statements: vec![ShellStatement::Value(String::from("1"))]}, ShellExpression {statements: vec![ShellStatement::Break]}),
+                ShellStatement::Exit(1)
+            ]
+        };
+        //Run expression
+        let rc: u8 = runner.run(&mut core, expression);
+        /*
+            Verify messages:
+
+            - 0: Output (read prompt)
+            - 1: Dirs
+            - 2: Output: HELLO\n
+            - 3: Output: file[0]
+            - 4: Output: file[1]
+            - 5: dirs
+            - 6: dirs
+            - 7: dirs
+            - 8: dirs
+            - 9: Output: TIME
+            - 10: Time
+        */
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        println!("Runner::run INBOX {:?}", inbox);
+        assert_eq!(inbox.len(), 11);
+        for (index, message) in inbox.iter().enumerate() {
+            match index {
+                0 => {
+                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                        assert_eq!(*stdout.as_ref().unwrap(), String::from(">>"));
+                    } else {
+                        panic!("Not an output");
+                    }
+                },
+                1 => {
+                    if let ShellStreamMessage::Dirs(d)  = message {
+                        assert_eq!(d.len(), 1);
+                    } else {
+                        panic!("Not a dirs");
+                    }
+                },
+                2 => {
+                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                        assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO\n"));
+                    } else {
+                        panic!("Not an output");
+                    }
+                },
+                3 => {
+                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                        assert_eq!(*stdout.as_ref().unwrap(), format!("{}\n", files[0]));
+                    } else {
+                        panic!("Not an output");
+                    }
+                },
+                4 => {
+                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                        assert_eq!(*stdout.as_ref().unwrap(), format!("{}\n", files[1]));
+                    } else {
+                        panic!("Not an output");
+                    }
+                },
+                5 => {
+                    if let ShellStreamMessage::Dirs(dirs) = message {
+                        assert_eq!(dirs.len(), 2);
+                        assert_eq!(dirs[0], PathBuf::from("/tmp/"));
+                        assert_eq!(dirs[1], core.get_home());
+                    } else {
+                        panic!("Not a dirs");
+                    }
+                },
+                6 => {
+                    if let ShellStreamMessage::Dirs(dirs) = message {
+                        assert_eq!(dirs.len(), 3);
+                        assert_eq!(dirs[0], PathBuf::from("/sbin/"));
+                        assert_eq!(dirs[1], PathBuf::from("/tmp/"));
+                        assert_eq!(dirs[2], core.get_home());
+                    } else {
+                        panic!("Not a dirs");
+                    }
+                },
+                7 => {
+                    if let ShellStreamMessage::Dirs(dirs) = message {
+                        assert_eq!(dirs.len(), 1);
+                        assert_eq!(dirs[0], PathBuf::from(core.get_home()));
+                    } else {
+                        panic!("Not a dirs");
+                    }
+                },
+                8 => {
+                    if let ShellStreamMessage::Dirs(dirs) = message {
+                        assert_eq!(dirs.len(), 1);
+                        assert_eq!(dirs[0], PathBuf::from("/sbin/"));
+                    } else {
+                        panic!("Not a dirs");
+                    }
+                },
+                9 => {
+                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                        assert_eq!(*stdout.as_ref().unwrap(), String::from("TIME\n"));
+                    } else {
+                        panic!("Not an output");
+                    }
+                },
+                10 => {
+                    if let ShellStreamMessage::Time(t) = message {
+                        assert!(t.as_millis() > 0 && t.as_millis() < 1000);
+                    } else {
+                        panic!("Not a time");
+                    }
+                },
+                _ => panic!("Out of inbox range")
+            }   
+        }
+        //Verify MYKEY
+        assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("MYVALUE"));
+        //Verify YOURKEY
+        assert_eq!(core.value_get(&String::from("YOURKEY")).unwrap(), String::from("YOURVALUE"));
+        //Verify RESULT
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("7"));
+        //Verify Alias
+        assert!(core.alias_get(&String::from("ll")).is_none());
     }
 
     #[test]
