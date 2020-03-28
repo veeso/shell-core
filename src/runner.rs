@@ -241,9 +241,12 @@ impl ShellRunner {
                                             let _ = core.sstream.send(ShellStreamMessage::Error(ShellError::TaskError(err.clone())));
                                         },
                                         TaskMessageRx::Output((stdout, stderr)) => {
-                                            if stdout.is_some() || stderr.is_some() {
+                                            //Send only if next relation is not Pipe (and stdout or stderr is some)
+                                            if (stdout.is_some() || stderr.is_some()) && chain.next_relation != TaskRelation::Pipe {
                                                 let _ = core.sstream.send(ShellStreamMessage::Output((stdout.clone(), stderr.clone())));
                                                 output.push_str(stdout.as_ref().unwrap().as_str());
+                                            } else if chain.next_relation == TaskRelation::Pipe && stdout.is_some() {
+                                                self.buffer = Some(stdout.as_ref().unwrap().clone());
                                             }
                                         }
                                     }
@@ -357,7 +360,7 @@ impl ShellRunner {
                 chain = *next;
                 //Verify if relation satisfied
                 //If relation is unsatisfied, it will keep iterating, but the block won't be executed
-                match chain.next_relation {
+                match chain.prev_relation {
                     TaskRelation::And => {
                         //Set next to chain; if exitcode is 0, relation is satisfied
                         if rc == 0 {
@@ -1064,10 +1067,10 @@ impl ShellRunner {
         match redirection {
             Redirection::Stdout => {
                 //Send output
-                sstream.send(ShellStreamMessage::Output((Some(output), None)));
+                //sstream.send(ShellStreamMessage::Output((Some(output), None))); NOTE: already sent by Exec in function
             },
             Redirection::Stderr => {
-                sstream.send(ShellStreamMessage::Output((None, Some(output))));
+                //sstream.send(ShellStreamMessage::Output((None, Some(output)))); NOTE: already sent by Exec in function
             }
             Redirection::File(file, file_mode) => {
                 match OpenOptions::new().create(true).append(file_mode == FileRedirectionType::Append).truncate(file_mode == FileRedirectionType::Truncate).open(file.as_str()) {
@@ -1376,9 +1379,418 @@ mod tests {
         assert_eq!(chain.next_relation, TaskRelation::Unrelated);
         assert_eq!(chain.prev_relation, TaskRelation::Or);
         assert!(chain.next.is_none());
+
+        //Task + function
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Simple task
+        let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
+        let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
+        //Add a function to runner
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Return(0)]
+        };
+        runner.function(&mut core, String::from("myfunc"), expression);
+        let command: Vec<String> = vec![String::from("myfunc"), String::from("bar")];
+        sample_task.new_pipeline(
+            command,
+            Redirection::Stdout,
+            Redirection::Stderr,
+            TaskRelation::And, //and between echo2 and myfunc
+        );
+        let chain: TaskChain = runner.chain_task(&mut core, sample_task);
+        //Let's see if it's correct
+        assert!(chain.task.is_some());
+        assert!(chain.task.unwrap().next.is_none());
+        assert!(chain.function.is_none());
+        assert_eq!(chain.next_relation, TaskRelation::And);
+        assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
+        assert!(chain.next.is_some());
+        //Next is a function
+        let chain: TaskChain = *chain.next.unwrap();
+        assert!(chain.task.is_none());
+        assert!(chain.function.is_some());
+        assert_eq!(chain.function.as_ref().unwrap().args[0], String::from("myfunc"));
+        assert_eq!(chain.function.as_ref().unwrap().args[1], String::from("bar"));
+        assert_eq!(chain.next_relation, TaskRelation::Unrelated);
+        assert_eq!(chain.prev_relation, TaskRelation::And);
+        assert!(chain.next.is_none());
     }
 
-    //TODO: exec
+    #[test]
+    fn test_runner_exec_task_simple() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HELLO WORLD"));
+        //One output
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_task_and_func() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Unrelated);
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HELLO WORLD\nHI"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //Two outputs
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 2);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    0 => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_pipeline_task_and_func() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let head_task: Task = Task::new(vec![String::from("head"), String::from("-n"), String::from("1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(head_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myhead"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("echo"), String::from("HELLO")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myhead")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Pipe);
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HELLO"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //Only final output
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_task_input() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("head"), String::from("-n"), String::from("1")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Unrelated);
+        //Prepare Kill
+        assert!(ustream.send(UserStreamMessage::Input(String::from("INPUT STRING\n"))));
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("INPUT STRING\nHI"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //One output
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 2);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    0 => assert_eq!(*stdout.as_ref().unwrap(), String::from("INPUT STRING\n")),
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_task_kill() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("cat")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Unrelated);
+        //Prepare Kill
+        assert!(ustream.send(UserStreamMessage::Kill));
+        //Exec task (cat will be killed)
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HI"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //One output
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_task_signal() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("cat")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Unrelated);
+        //Prepare Signal
+        assert!(ustream.send(UserStreamMessage::Signal(UnixSignal::Sigint)));
+        //Exec task (cat will be terminated)
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HI"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //One output
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_task_terminate() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("cat")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::And);
+        //Prepare Interrupt
+        assert!(ustream.send(UserStreamMessage::Interrupt));
+        //Exec task (cat will be terminated)
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 130);
+        assert_eq!(out, String::from(""));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //Zero output since task has been terminated
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 0);
+    }
+
+    #[test]
+    fn test_runner_exec_relations_or_satisfied() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("cat")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Or);
+        //Prepare Signal
+        assert!(ustream.send(UserStreamMessage::Signal(UnixSignal::Sigint)));
+        //Exec task (cat will be terminated)
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("HI"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //One output
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_relations_or_unsatisfied() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("echo"), String::from("OUTPUT")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::Or);
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("OUTPUT"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //One output (second task won't be executed)
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 1);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("OUTPUT\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_relations_and_satisfied() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("echo"), String::from("FOOBAR")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::And);
+        //Prepare Signal
+        assert!(ustream.send(UserStreamMessage::Signal(UnixSignal::Sigint)));
+        //Exec task (cat will be terminated)
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 0);
+        assert_eq!(out, String::from("FOOBAR\nHI"));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //One output
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 2);
+        for (index, message) in inbox.iter().enumerate() {
+            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                match index {
+                    0 => assert_eq!(*stdout.as_ref().unwrap(), String::from("FOOBAR\n")),
+                    _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
+                }
+            } else {
+                panic!("Not an output message");
+            }
+        }
+    }
+
+    #[test]
+    fn test_runner_exec_relations_and_unsatisfied() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Define a function which echoes the first provided argument
+        let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
+        let myfunc: ShellExpression = ShellExpression {
+            statements: vec![ShellStatement::Exec(echo_task)]
+        };
+        //Save function
+        assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
+        //Prepare task to exec
+        let mut task: Task = Task::new(vec![String::from("cat")], Redirection::Stdout, Redirection::Stderr);
+        //Chain myecho
+        task.new_pipeline(vec![String::from("myecho"), String::from("HI")], Redirection::Stdout, Redirection::Stderr, TaskRelation::And);
+        //Prepare Signal
+        assert!(ustream.send(UserStreamMessage::Kill));
+        //Exec task
+        let (rc, out): (u8, String) = runner.exec(&mut core, task);
+        assert_eq!(rc, 9);
+        assert_eq!(out, String::from(""));
+        //Verify ustream messages
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        //Zero output, cat is terminated and second task doesn't start
+        println!("Exec Inbox: {:?}", inbox);
+        assert_eq!(inbox.len(), 0);
+    }
+
     //TODO: exec_history
     //TODO: exec_time
 

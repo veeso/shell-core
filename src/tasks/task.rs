@@ -370,13 +370,13 @@ mod tests {
             command,
             Redirection::Stdout,
             Redirection::Stderr,
-            TaskRelation::And,
+            TaskRelation::Or,
         );
         assert_eq!(task.relation, TaskRelation::And);
         //Verify next is something
         assert!(task.next.is_some());
         //Reset next
-        assert_eq!(task.truncate(1), TaskRelation::And);
+        assert_eq!(task.truncate(1), TaskRelation::Or);
         assert_eq!(task.relation, TaskRelation::And);
         assert!(task.next.is_some());
         //Let's try to truncate again
