@@ -197,6 +197,7 @@ pub struct UserStream {
 /// ## ShellStreamMessage
 /// 
 /// The shell stream message contains the messages which can be sent by the ShellCore to the "user"
+#[derive(std::fmt::Debug)]
 pub enum ShellStreamMessage {
     Output((Option<String>, Option<String>)),   //Shell Output (stdout, stderr)
     Error(ShellError),                          //Shell Error
@@ -208,6 +209,7 @@ pub enum ShellStreamMessage {
 /// ## UserStreamMessage
 /// 
 /// The User stream message contains the messages which can be sent by the "user" to the ShellCore during the execution
+#[derive(std::fmt::Debug)]
 pub enum UserStreamMessage {
     Input(String),          //Stdin
     Kill,                   //Kill NOTE: the kill is forwarded to the task

@@ -71,7 +71,7 @@ impl Task {
 
     /// ### truncate
     /// 
-    /// Truncate Task pipeline at a certain index. The provided index will be of the first element removed from the pipeline
+    /// Truncate Task pipeline at a certain index. The provided index will be of the last element kept in the pipeline
     /// Returns the broken relation
     pub(crate) fn truncate(&mut self, index: usize) -> TaskRelation {
         let t: &mut Task = self;
@@ -80,13 +80,21 @@ impl Task {
             if t.next.is_none() {
                 return TaskRelation::Unrelated;
             }
-            let t: &mut Task = &mut t.next.as_mut().unwrap();
+            //This is why rust is for certain aspects the most stupid language ever, you can't edit t after that, because it says it's a temp value. But it's not fuckin true
+            let t: &mut Task = match i {
+                0 => t,
+                _ => t.next.as_mut().unwrap()
+            };
             if i == index {
                 t.next = None; //Set next to None
                 let last_relation: TaskRelation = t.relation.clone();
                 t.relation = TaskRelation::Unrelated; //Set relation to unrelated
                 return last_relation;
             }
+            //NOTE: no, you can't do that; rust is so fuckin bad sometimes
+            /*
+            t = &mut t.next.as_mut().unwrap();
+            */
             i = i + 1;
         }
     }
@@ -368,7 +376,7 @@ mod tests {
         //Verify next is something
         assert!(task.next.is_some());
         //Reset next
-        assert_eq!(task.truncate(2), TaskRelation::And);
+        assert_eq!(task.truncate(1), TaskRelation::And);
         assert_eq!(task.relation, TaskRelation::And);
         assert!(task.next.is_some());
         //Let's try to truncate again
