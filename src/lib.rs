@@ -172,7 +172,8 @@ pub enum ShellStatement {
 /// The shell runner is the struct which takes care of running Shell Expressions
 pub struct ShellRunner {
     buffer: Option<String>, //Input buffer
-    exit_flag: Option<u8>   //When active, exit from expression execution
+    exit_flag: Option<u8>,  //When active, exit from expression execution
+    break_loop: bool        //Indicates whether parent loop has to be stopped
 }
 
 //@! Streams
