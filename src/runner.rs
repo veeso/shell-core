@@ -323,7 +323,7 @@ impl ShellRunner {
                         }
                         core.storage_arg_set(index.to_string(), arg.clone());
                     }
-                    //Execute function
+                    //@! Execute function
                     let (exitcode, out): (u8, String) = self.run_expression(core, func.expression);
                     //remove arguments from storage
                     for (index, _) in func.args.iter().enumerate() {
@@ -429,7 +429,6 @@ impl ShellRunner {
         let mut chain_block_length: usize = 0;
         //Iterate over tasks
         loop {
-            chain_block_length += 1;
             //Resolve task command
             let mut command: String = head.command[0].clone();
             let mut argv: Vec<String> = Vec::new(); //New argv
@@ -464,7 +463,7 @@ impl ShellRunner {
                 //If it's a function, chain previous task block
                 if let Some(mut chain_block) = last_chain_block.take() {
                     //Truncate task at index and get last relation
-                    last_relation = chain_block.truncate(chain_block_length);
+                    last_relation = chain_block.truncate(chain_block_length - 1);
                     chain_block_length = 0;
                     //Chain task
                     match chain.as_mut() {
@@ -497,6 +496,8 @@ impl ShellRunner {
                     break;
                 }
             } else { //Not a function
+                //Incremenet chain block length
+                chain_block_length += 1;
                 //If previous was function or last chain block is none
                 if previous_was_function || last_chain_block.is_none() {
                     previous_was_function = false;
@@ -1350,11 +1351,13 @@ mod tests {
         let chain: TaskChain = runner.chain_task(&mut core, sample_task);
         //Let's see if it's correct
         assert!(chain.task.is_some());
-        assert!(chain.task.unwrap().next.is_some());
+        assert!(chain.task.clone().unwrap().next.is_some());
         assert!(chain.function.is_none());
         assert_eq!(chain.next_relation, TaskRelation::And);
         assert_eq!(chain.prev_relation, TaskRelation::Unrelated);
         assert!(chain.next.is_some());
+        //VERY IMPORTANT! chain.task.next.next MUST be None
+        assert!(chain.task.unwrap().next.unwrap().next.is_none());
         //Next is a function
         let chain: TaskChain = *chain.next.unwrap();
         assert!(chain.task.is_none());
