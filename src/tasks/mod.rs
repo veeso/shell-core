@@ -32,6 +32,7 @@ mod process;
 pub mod task;
 
 use crate::Redirection;
+use crate::TaskRelation;
 use process::Process;
 
 use std::sync::{Arc, mpsc, Mutex};
@@ -87,22 +88,6 @@ pub(crate) struct TaskManager {
     receiver: Option<mpsc::Receiver<TaskMessageRx>>, //Receive messages from tasks
     sender: Option<mpsc::Sender<TaskMessageTx>>, //Sends Task messages
     next: Option<Task> //NOTE: Option because has to be taken by thread
-}
-
-/// ## TaskRelation
-///
-/// The task relation describes the behaviour the task manager should apply in the task execution for the next command
-///
-/// - And: the next command is executed only if the current one has finished with success; the task result is Ok, if all the commands are successful
-/// - Or: the next command is executed only if the current one has failed; the task result is Ok if one of the two has returned with success
-/// - Pipe: the commands are chained through a pipeline. This means they're executed at the same time and the output of the first is redirect to the output of the seconds one
-/// - Unrelated: the commands are executed without any relation. The return code is the return code of the last command executed
-#[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
-pub enum TaskRelation {
-    And,
-    Or,
-    Pipe,
-    Unrelated,
 }
 
 /// ## TaskMessageTx

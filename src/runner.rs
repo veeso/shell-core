@@ -29,9 +29,10 @@
 extern crate glob;
 
 use crate::{FileRedirectionType, MathError, MathOperator, Redirection};
-use crate::{ShellCore, ShellError, ShellExpression, ShellRunner, ShellStatement, ShellStream, ShellStreamMessage};
-use crate::{TaskManager, Task, UserStreamMessage};
-use crate::tasks::{TaskError, TaskErrorCode, TaskMessageRx, TaskMessageTx, TaskRelation};
+use crate::{ShellCore, ShellError, ShellExpression, ShellRunner, ShellStatement};
+use crate::{ShellStream, ShellStreamMessage, UserStreamMessage};
+use crate::{TaskManager, Task, TaskRelation};
+use crate::tasks::{TaskError, TaskErrorCode, TaskMessageRx, TaskMessageTx};
 
 use glob::glob;
 use std::collections::{HashMap, VecDeque};
@@ -935,7 +936,7 @@ impl ShellRunner {
         //NOTE: the expression is executed as long as it's possible
         for statement in expression.statements.iter() {
             //Match statement and execute it
-            match statement {
+            match &statement.0 {
                 ShellStatement::Alias(name, cmd) => {
                     rc = self.alias(core, name.clone(), cmd.clone());
                 },
@@ -1232,31 +1233,31 @@ mod tests {
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Let's build our case statement - In this case 2 will be matched
         let case_match: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("2"))]
+            statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]
         };
         let case0: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("0"))]
+            statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]
         };
         let case0_action: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         let case1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("0"))]
+            statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]
         };
         let case1_action: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(1)]
+            statements: vec![(ShellStatement::Return(1), TaskRelation::Unrelated)]
         };
         let case2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("2"))]
+            statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]
         };
         let case2_action: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(2)]
+            statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]
         };
         let case_any: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("\\*"))]
+            statements: vec![(ShellStatement::Value(String::from("\\*")), TaskRelation::Unrelated)]
         };
         let case_any_action: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(255)]
+            statements: vec![(ShellStatement::Return(255), TaskRelation::Unrelated)]
         };
         let cases: Vec<(ShellExpression, ShellExpression)> = vec![(case0, case0_action), (case1, case1_action), (case2, case2_action), (case_any, case_any_action)];
         //Perform case
@@ -1264,20 +1265,20 @@ mod tests {
         assert_eq!(runner.case(&mut core, case_match, cases.clone()).unwrap(), 2);
         //Let's try any case match (using value 40)
         let case_match: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("40"))]
+            statements: vec![(ShellStatement::Value(String::from("40")), TaskRelation::Unrelated)]
         };
         //We expect 255 as rc, since should match any case
         assert_eq!(runner.case(&mut core, case_match, cases.clone()).unwrap(), 255);
         //Let's try an unmatched case
         let case0: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("0"))]
+            statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]
         };
         let case0_action: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         let cases: Vec<(ShellExpression, ShellExpression)> = vec![(case0, case0_action)];
         let case_match: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("1"))]
+            statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]
         };
         assert!(runner.case(&mut core, case_match, cases).is_none());
     }
@@ -1328,7 +1329,7 @@ mod tests {
         //@! Chain (task[2] + function + task[2])
         //Add a function to runner
         let expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         runner.function(&mut core, String::from("myfunc"), expression);
         let command: Vec<String> = vec![String::from("echo"), String::from("foo")];
@@ -1398,7 +1399,7 @@ mod tests {
         let mut sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
         //Add a function to runner
         let expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         runner.function(&mut core, String::from("myfunc"), expression);
         let command: Vec<String> = vec![String::from("myfunc"), String::from("bar")];
@@ -1459,7 +1460,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1495,7 +1496,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let head_task: Task = Task::new(vec![String::from("head"), String::from("-n"), String::from("1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(head_task)]
+            statements: vec![(ShellStatement::Exec(head_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myhead"), myfunc), true);
@@ -1530,7 +1531,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1568,7 +1569,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1605,7 +1606,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1642,7 +1643,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1670,7 +1671,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1707,7 +1708,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1742,7 +1743,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1780,7 +1781,7 @@ mod tests {
         //Define a function which echoes the first provided argument
         let echo_task: Task = Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr);
         let myfunc: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(echo_task)]
+            statements: vec![(ShellStatement::Exec(echo_task), TaskRelation::Unrelated)]
         };
         //Save function
         assert_eq!(core.function_set(String::from("myecho"), myfunc), true);
@@ -1887,11 +1888,11 @@ mod tests {
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Simple export
         assert_eq!(runner.export(&mut core, String::from("FOO"), ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("BAR"))]
+            statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
         }), 0);
         //Try bad variable name
         assert_eq!(runner.export(&mut core, String::from("5HIGH"), ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("BAR"))]
+            statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
         }), 1);
         //Verify value is exported
         assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
@@ -1899,7 +1900,7 @@ mod tests {
         let command: Vec<String> = vec![String::from("echo"), String::from("5")];
         let sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
         let expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(sample_task)]
+            statements: vec![(ShellStatement::Exec(sample_task), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.export(&mut core, String::from("RESULT"), expression), 0);
         //Verify value is exported
@@ -1915,11 +1916,11 @@ mod tests {
         let file_case: String = format!("{}/*", tmpdir.path().display());
         //Prepare foreach
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(file_case.clone())]
+            statements: vec![(ShellStatement::Value(file_case.clone()), TaskRelation::Unrelated)]
         };
         let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
         let foreach_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(foreach_task)]
+            statements: vec![(ShellStatement::Exec(foreach_task), TaskRelation::Unrelated)]
         };
         //This for each will store each file contained in tmpdir into FILE; then for each entry echo $FILE will be performed
         assert_eq!(runner.foreach(&mut core, String::from("FILE"), iterator, foreach_perform).unwrap(), 0);
@@ -1939,29 +1940,29 @@ mod tests {
         //Test with break
         //Prepare foreach
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(file_case)]
+            statements: vec![(ShellStatement::Value(file_case), TaskRelation::Unrelated)]
         };
-        assert_eq!(runner.foreach(&mut core, String::from("FILE"), iterator, ShellExpression {statements: vec![ShellStatement::Break]}).unwrap(), 0);
+        assert_eq!(runner.foreach(&mut core, String::from("FILE"), iterator, ShellExpression {statements: vec![(ShellStatement::Break, TaskRelation::Unrelated)]}).unwrap(), 0);
         //Foreach in empty directory
         let tmpdir: tempfile::TempDir = create_tmp_dir();
         let file_case: String = format!("{}/*", tmpdir.path().display());
         //Prepare foreach
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(file_case.clone())]
+            statements: vec![(ShellStatement::Value(file_case.clone()), TaskRelation::Unrelated)]
         };
         let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
         let foreach_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(foreach_task)]
+            statements: vec![(ShellStatement::Exec(foreach_task), TaskRelation::Unrelated)]
         };
         //Must be None since there's no file in it
         assert!(runner.foreach(&mut core, String::from("FILE"), iterator, foreach_perform).is_none());
         //Foreach in not existing directory
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("/tmp/thisdirectorydoesnotexist/*"))]
+            statements: vec![(ShellStatement::Value(String::from("/tmp/thisdirectorydoesnotexist/*")), TaskRelation::Unrelated)]
         };
         let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
         let foreach_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(foreach_task)]
+            statements: vec![(ShellStatement::Exec(foreach_task), TaskRelation::Unrelated)]
         };
         //Must be None, directory doesn't exist
         assert!(runner.foreach(&mut core, String::from("FILE"), iterator, foreach_perform).is_none());
@@ -1973,30 +1974,30 @@ mod tests {
         let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Let's try a simple if case without else
         let if_expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)] //This is OK, since returns 0
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)] //This is OK, since returns 0
         };
         let if_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(42)]
+            statements: vec![(ShellStatement::Return(42), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.ifcond(&mut core, if_expression, if_perform, None).unwrap(), 42);
         //Let's try a simple if case without else, but if condition is false
         let if_expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(1)] //This is Nok, since returns 1
+            statements: vec![(ShellStatement::Return(1), TaskRelation::Unrelated)] //This is Nok, since returns 1
         };
         let if_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(42)]
+            statements: vec![(ShellStatement::Return(42), TaskRelation::Unrelated)]
         };
         //Exitcode will be None
         assert!(runner.ifcond(&mut core, if_expression, if_perform, None).is_none());
         //Let's try a case with else, else is performed this time
         let if_expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(1)] //This is Nok, since returns 1
+            statements: vec![(ShellStatement::Return(1), TaskRelation::Unrelated)] //This is Nok, since returns 1
         };
         let if_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(42)]
+            statements: vec![(ShellStatement::Return(42), TaskRelation::Unrelated)]
         };
         let else_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(128)]
+            statements: vec![(ShellStatement::Return(128), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.ifcond(&mut core, if_expression, if_perform, Some(else_perform)).unwrap(), 128);
     }
@@ -2008,143 +2009,143 @@ mod tests {
         //Quick maths
         //And
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("34"))]
+            statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::And, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("32"));
         //Divide
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("64"))]
+            statements: vec![(ShellStatement::Value(String::from("64")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Divide, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("2"));
         //Divide by 0
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("0"))]
+            statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Divide, operator2), 1);
         //Equal
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("16"))]
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("16"))]
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Equal, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
         //Equal (but not equal)
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("34"))]
+            statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Equal, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
         //Module
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("64"))]
+            statements: vec![(ShellStatement::Value(String::from("64")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("24"))]
+            statements: vec![(ShellStatement::Value(String::from("24")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Module, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("16"));
         //Multiply
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("4"))]
+            statements: vec![(ShellStatement::Value(String::from("4")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("8"))]
+            statements: vec![(ShellStatement::Value(String::from("8")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Multiply, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("32"));
         //NotEqual
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("2"))]
+            statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("8"))]
+            statements: vec![(ShellStatement::Value(String::from("8")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::NotEqual, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
         //NotEqual (but equal)
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::NotEqual, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
         //Or
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("16"))]
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("4"))]
+            statements: vec![(ShellStatement::Value(String::from("4")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Or, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("20"));
         //Power
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("2"))]
+            statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("3"))]
+            statements: vec![(ShellStatement::Value(String::from("3")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Power, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("8"));
         //Power (negative power)
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("2"))]
+            statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("-4"))]
+            statements: vec![(ShellStatement::Value(String::from("-4")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Power, operator2), 1);
         //Shift Left
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("4"))]
+            statements: vec![(ShellStatement::Value(String::from("4")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("8"))]
+            statements: vec![(ShellStatement::Value(String::from("8")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::ShiftLeft, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1024"));
         //Right Shift
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("34"))]
+            statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::And, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("32"));
         //Sum
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("5"))]
+            statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("5"))]
+            statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Sum, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("10"));
         //Xor
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("32"))]
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("4"))]
+            statements: vec![(ShellStatement::Value(String::from("4")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Xor, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("36"));
@@ -2236,10 +2237,10 @@ mod tests {
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Simple export
         assert_eq!(runner.set(&mut core, String::from("FOO"), ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("BAR"))]
+            statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
         }), 0);
         assert_eq!(runner.set(&mut core, String::from("5HIGH"), ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("BAR"))]
+            statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
         }), 1);
         //Verify value is exported
         assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
@@ -2247,7 +2248,7 @@ mod tests {
         let command: Vec<String> = vec![String::from("echo"), String::from("5")];
         let sample_task: Task = Task::new(command, Redirection::Stdout, Redirection::Stderr);
         let expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(sample_task)]
+            statements: vec![(ShellStatement::Exec(sample_task), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.set(&mut core, String::from("RESULT"), expression), 0);
         //Verify value is exported
@@ -2265,17 +2266,17 @@ mod tests {
         //Prepare while (while [ $VALUE -ne 4 ]); do echo $VALUE; let VALUE=VALUE+1; done)
         let while_condition_task: Task = Task::new(vec![String::from("["), String::from("$VALUE"), String::from("-ne"), String::from("4"), String::from("]")], Redirection::Stdout, Redirection::Stderr);
         let while_condition: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(while_condition_task)] 
+            statements: vec![(ShellStatement::Exec(while_condition_task), TaskRelation::Unrelated)] 
         };
         let echo_value_task: Task = Task::new(vec![String::from("echo"), String::from("$VALUE")], Redirection::Stdout, Redirection::Stderr);
         let operator1: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("$VALUE"))]
+            statements: vec![(ShellStatement::Value(String::from("$VALUE")), TaskRelation::Unrelated)]
         };
         let operator2: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("1"))]
+            statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]
         };
         let while_perform: ShellExpression = ShellExpression { //Echo value; let value=value+1
-            statements:vec![ShellStatement::Exec(echo_value_task), ShellStatement::Let(String::from("VALUE"), operator1, MathOperator::Sum, operator2)]
+            statements:vec![(ShellStatement::Exec(echo_value_task), TaskRelation::Unrelated), (ShellStatement::Let(String::from("VALUE"), operator1, MathOperator::Sum, operator2), TaskRelation::Unrelated)]
         };
         //Run while loop
         assert_eq!(runner.while_loop(&mut core, while_condition, while_perform).unwrap(), 0);
@@ -2295,15 +2296,15 @@ mod tests {
         
         //Let's try a while with no cases
         let while_condition: ShellExpression = ShellExpression { //This will never run
-            statements: vec![ShellStatement::Return(1)]
+            statements: vec![(ShellStatement::Return(1), TaskRelation::Unrelated)]
         };
         let while_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(42)]
+            statements: vec![(ShellStatement::Return(42), TaskRelation::Unrelated)]
         };
         //While result will be None
         assert!(runner.while_loop(&mut core, while_condition, while_perform).is_none());
         //Try while with Break (Mustn't block)
-        assert_eq!(runner.while_loop(&mut core, ShellExpression {statements: vec![ShellStatement::Return(0)]}, ShellExpression {statements: vec![ShellStatement::Break]}).unwrap(), 0);
+        assert_eq!(runner.while_loop(&mut core, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Break, TaskRelation::Unrelated)]}).unwrap(), 0);
     }
 
     #[test]
@@ -2315,14 +2316,14 @@ mod tests {
         //Prepare case
         //Let's try an unmatched case
         let case0: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("0"))]
+            statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]
         };
         let case0_action: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         let cases: Vec<(ShellExpression, ShellExpression)> = vec![(case0, case0_action)];
         let case_match: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("1"))]
+            statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]
         };
         //Foreach
         //Let's create a temp dir with 2 files in it
@@ -2330,11 +2331,11 @@ mod tests {
         let file_case: String = format!("{}/*", tmpdir.path().display());
         //Prepare foreach
         let iterator: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(file_case)]
+            statements: vec![(ShellStatement::Value(file_case), TaskRelation::Unrelated)]
         };
         let foreach_task: Task = Task::new(vec![String::from("echo"), String::from("$FILE")], Redirection::Stdout, Redirection::Stderr);
         let foreach_perform: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Exec(foreach_task)]
+            statements: vec![(ShellStatement::Exec(foreach_task), TaskRelation::Unrelated)]
         };
         //Push entry to history
         core.history_push(String::from("echo foobar"));
@@ -2343,29 +2344,29 @@ mod tests {
         //Prepare an expression with all the statements
         let expression: ShellExpression = ShellExpression {
             statements: vec![
-                ShellStatement::Read(Some(String::from(">>")), None, None), //Read as first to not interfere with exec
-                ShellStatement::Alias(Some(String::from("ll")), Some(String::from("ls -l"))),
-                ShellStatement::Case(case_match, cases),
-                ShellStatement::Cd(PathBuf::from("/tmp/")),
-                ShellStatement::Continue,
-                ShellStatement::Dirs,
-                ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("HELLO")], Redirection::Stdout, Redirection::Stderr)),
-                //ShellStatement::ExecHistory(0) TODO: requires readline
-                ShellStatement::Export(String::from("MYKEY"), ShellExpression {statements: vec![ShellStatement::Value(String::from("MYVALUE"))]}),
-                ShellStatement::For(String::from("FILE"), iterator, foreach_perform),
-                ShellStatement::Function(String::from("myecho"), ShellExpression { statements: vec![ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr))]}),
-                ShellStatement::If(ShellExpression {statements: vec![ShellStatement::Value(String::from("1"))]}, ShellExpression {statements: vec![ShellStatement::Return(0)]}, None),
-                ShellStatement::Let(String::from("RESULT"), ShellExpression {statements: vec![ShellStatement::Value(String::from("5"))]}, MathOperator::Sum, ShellExpression {statements: vec![ShellStatement::Value(String::from("2"))]}),
-                ShellStatement::Pushd(PathBuf::from("/tmp/")),
-                ShellStatement::Pushd(PathBuf::from("/sbin/")),
-                ShellStatement::PopdBack,
-                ShellStatement::PopdFront,
-                ShellStatement::Set(String::from("YOURKEY"), ShellExpression {statements: vec![ShellStatement::Value(String::from("YOURVALUE"))]}),
-                //ShellStatement::Source(PathBuf::from("/tmp/stuff.sh")), TODO: requires readline
-                ShellStatement::Time(Task::new(vec![String::from("echo"), String::from("TIME")], Redirection::Stdout, Redirection::Stderr)),
-                ShellStatement::Unalias(String::from("ll")),
-                ShellStatement::While(ShellExpression {statements: vec![ShellStatement::Value(String::from("1"))]}, ShellExpression {statements: vec![ShellStatement::Break]}),
-                ShellStatement::Exit(1)
+                (ShellStatement::Read(Some(String::from(">>")), None, None), TaskRelation::Unrelated), //Read as first to not interfere with exec
+                (ShellStatement::Alias(Some(String::from("ll")), Some(String::from("ls -l"))), TaskRelation::Unrelated),
+                (ShellStatement::Case(case_match, cases), TaskRelation::Unrelated),
+                (ShellStatement::Cd(PathBuf::from("/tmp/")), TaskRelation::Unrelated),
+                (ShellStatement::Continue, TaskRelation::Unrelated),
+                (ShellStatement::Dirs, TaskRelation::Unrelated),
+                (ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("HELLO")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated),
+                //ShellStatement::ExecHistory(0) TODO: requires readlin, TaskRelation::Unrelated)e
+                (ShellStatement::Export(String::from("MYKEY"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("MYVALUE")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::For(String::from("FILE"), iterator, foreach_perform), TaskRelation::Unrelated),
+                (ShellStatement::Function(String::from("myecho"), ShellExpression { statements: vec![(ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), TaskRelation::Unrelated),
+                (ShellStatement::Let(String::from("RESULT"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::Pushd(PathBuf::from("/tmp/")), TaskRelation::Unrelated),
+                (ShellStatement::Pushd(PathBuf::from("/sbin/")), TaskRelation::Unrelated),
+                (ShellStatement::PopdBack, TaskRelation::Unrelated),
+                (ShellStatement::PopdFront, TaskRelation::Unrelated),
+                (ShellStatement::Set(String::from("YOURKEY"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("YOURVALUE")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                //ShellStatement::Source(PathBuf::from("/tmp/stuff.sh")), TODO: requires readlin, TaskRelation::Unrelated
+                (ShellStatement::Time(Task::new(vec![String::from("echo"), String::from("TIME")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated),
+                (ShellStatement::Unalias(String::from("ll")), TaskRelation::Unrelated),
+                (ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Break, TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::Exit(1), TaskRelation::Unrelated)
             ]
         };
         //Run expression
@@ -2511,9 +2512,8 @@ mod tests {
     #[test]
     fn test_runner_function() {
         //Instantiate an expression
-        let statements: Vec<ShellStatement> = vec![ShellStatement::Exit(0)];
         let expression: ShellExpression = ShellExpression {
-            statements: statements
+            statements: vec![(ShellStatement::Exit(0), TaskRelation::Unrelated)]
         };
         //Instantiate function
         let argv: Vec<String> = vec![String::from("hi")];
@@ -2521,15 +2521,14 @@ mod tests {
         assert_eq!(function.redirection, Redirection::Stdout);
         assert_eq!(function.expression.statements.len(), 1);
         assert_eq!(function.args.len(), 1);
-        assert_eq!(discriminant(&function.expression.statements[0]), discriminant(&ShellStatement::Exit(0)));
+        assert_eq!(discriminant(&function.expression.statements[0].0), discriminant(&ShellStatement::Exit(0)));
     }
 
     #[test]
     fn test_runner_chain() {
         //Instantiate an expression
-        let statements: Vec<ShellStatement> = vec![ShellStatement::Exit(0)];
         let expression: ShellExpression = ShellExpression {
-            statements: statements
+            statements: vec![(ShellStatement::Exit(0), TaskRelation::Unrelated)]
         };
         //Instantiate function
         let argv: Vec<String> = vec![String::from("hi")];
@@ -2543,11 +2542,10 @@ mod tests {
         assert!(chain.task.is_none());
         //Prepare stuff to chain a new object
         let expression: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Value(String::from("BAR"))]
+            statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
         };
-        let statements: Vec<ShellStatement> = vec![ShellStatement::Set(String::from("FOO"), expression)];
         let expression: ShellExpression = ShellExpression {
-            statements: statements
+            statements: vec![(ShellStatement::Set(String::from("FOO"), expression), TaskRelation::Unrelated)]
         };
         let argv: Vec<String> = vec![String::from("hi")];
         let function: Function = Function::new(expression, argv, Redirection::Stdout);
@@ -2564,9 +2562,8 @@ mod tests {
         assert_eq!(next.next_relation, TaskRelation::Unrelated);
         assert!(next.next.is_none());
         //Prepare to chain a 3rd element
-        let statements: Vec<ShellStatement> = vec![ShellStatement::Read(None, None, None)];
         let expression: ShellExpression = ShellExpression {
-            statements: statements
+            statements: vec![(ShellStatement::Read(None, None, None), TaskRelation::Unrelated)]
         };
         let argv: Vec<String> = vec![String::from("hi")];
         let function: Function = Function::new(expression, argv, Redirection::Stdout);

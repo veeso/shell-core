@@ -660,6 +660,7 @@ mod tests {
     use super::*;
     use crate::parsers::bash::Bash;
     use crate::ShellStatement;
+    use crate::TaskRelation;
 
     use std::process::Command;
 
@@ -808,7 +809,7 @@ mod tests {
         assert!(core.function_get(&String::from("testfunc")).is_none());
         //Create function
         let test_function: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         //Set function
         assert!(core.function_set(String::from("testfunc"), test_function));
@@ -816,7 +817,7 @@ mod tests {
         assert!(core.function_get(&String::from("testfunc")).is_some());
         //Try to insert an invalid function name
         let test_function: ShellExpression = ShellExpression {
-            statements: vec![ShellStatement::Return(0)]
+            statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]
         };
         assert!(! core.function_set(String::from("5loops"), test_function));
     }

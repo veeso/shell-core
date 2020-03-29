@@ -106,7 +106,7 @@ pub enum ShellError {
 /// The Shell Function represents a shell function, which is made up of a name and a vector of statements
 #[derive(Clone, std::fmt::Debug)]
 pub struct ShellExpression {
-    statements: Vec<ShellStatement>
+    statements: Vec<(ShellStatement, TaskRelation)>
 }
 
 /// ## ShellStatement
@@ -358,4 +358,21 @@ pub enum UnixSignal {
     Sigio = 29,
     Sigpwr = 30,
     Sigsys = 31
+}
+
+//@! Task
+/// ## TaskRelation
+///
+/// The task relation describes the behaviour the task manager should apply in the task execution for the next command
+///
+/// - And: the next command is executed only if the current one has finished with success; the task result is Ok, if all the commands are successful
+/// - Or: the next command is executed only if the current one has failed; the task result is Ok if one of the two has returned with success
+/// - Pipe: the commands are chained through a pipeline. This means they're executed at the same time and the output of the first is redirect to the output of the seconds one
+/// - Unrelated: the commands are executed without any relation. The return code is the return code of the last command executed
+#[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
+pub enum TaskRelation {
+    And,
+    Or,
+    Pipe,
+    Unrelated,
 }
