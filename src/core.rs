@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn test_core_getters() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         assert_eq!(core.get_home(), core.home_dir.clone());
         assert_eq!(core.get_prev_dir(), core.home_dir.clone());
         assert_eq!(core.get_wrkdir(), core.wrk_dir.clone());
@@ -868,7 +868,7 @@ mod tests {
     
     #[test]
     fn test_core_misc_resolve_path() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
         assert_eq!(core.resolve_path(String::from("/tmp/")), PathBuf::from("/tmp/"));
         assert_eq!(core.resolve_path(String::from("~")), core.home_dir.clone());
         let mut dev_home_path: PathBuf = core.home_dir.clone();

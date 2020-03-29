@@ -979,7 +979,6 @@ mod tests {
         //Start
         assert!(manager.start().is_ok());
         //Wait for output messages
-        let start_time: Instant = Instant::now(); //Timeout for 3 seconds
         //Wait 500ms
         sleep(Duration::from_millis(200));
         //Terminate task manager

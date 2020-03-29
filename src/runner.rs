@@ -362,28 +362,7 @@ impl ShellRunner {
                 chain = *next;
                 //Verify if relation satisfied
                 //If relation is unsatisfied, it will keep iterating, but the block won't be executed
-                match chain.prev_relation {
-                    TaskRelation::And => {
-                        //Set next to chain; if exitcode is 0, relation is satisfied
-                        if rc == 0 {
-                            relation_satisfied = true;
-                        } else {
-                            relation_satisfied = false;
-                        }
-                    },
-                    TaskRelation::Or => {
-                        //If exitcode is successful relation is unsatisfied
-                        if rc == 0 {
-                            relation_satisfied = false;
-                        } else {
-                            relation_satisfied = true;
-                        }
-                    },
-                    TaskRelation::Pipe | TaskRelation::Unrelated => {
-                        //Relation is always satisfied
-                        relation_satisfied = true;
-                    }
-                }
+                relation_satisfied = self.is_relation_satisfied(rc, chain.prev_relation);
             } else {
                 //Otherwise break
                 break;
@@ -429,7 +408,6 @@ impl ShellRunner {
         let mut chain: Option<TaskChain> = None;
         let mut previous_was_function: bool = false;
         let mut last_relation: TaskRelation = TaskRelation::Unrelated;
-        let origin: Task = head.clone();
         let mut last_chain_block: Option<Task> = None;
         let mut chain_block_length: usize = 0;
         //Iterate over tasks
@@ -933,100 +911,106 @@ impl ShellRunner {
         let mut rc: u8 = 0;
         let mut output: String = String::new();
         //Iterate over expression
+        let mut relation_satisfied: bool = true;
         //NOTE: the expression is executed as long as it's possible
         for statement in expression.statements.iter() {
-            //Match statement and execute it
-            match &statement.0 {
-                ShellStatement::Alias(name, cmd) => {
-                    rc = self.alias(core, name.clone(), cmd.clone());
-                },
-                ShellStatement::Break => {
-                    self.break_loop = true;
-                    break; //Stop iterating
-                },
-                ShellStatement::Case(what, cases) => {
-                    if let Some(exitcode) = self.case(core, what.clone(), cases.clone()) {
+            //Execute statement only if relation is satisfied
+            if relation_satisfied {
+                //Match statement and execute it
+                match &statement.0 {
+                    ShellStatement::Alias(name, cmd) => {
+                        rc = self.alias(core, name.clone(), cmd.clone());
+                    },
+                    ShellStatement::Break => {
+                        self.break_loop = true;
+                        break; //Stop iterating
+                    },
+                    ShellStatement::Case(what, cases) => {
+                        if let Some(exitcode) = self.case(core, what.clone(), cases.clone()) {
+                            rc = exitcode;
+                        }
+                    },
+                    ShellStatement::Cd(path) => {
+                        rc = self.change_directory(core, path.clone());
+                    },
+                    ShellStatement::Continue => {
+                        //Keep iterating
+                        continue;
+                    },
+                    ShellStatement::Dirs => {
+                        rc = self.dirs(core);
+                    },
+                    ShellStatement::Exec(task) => {
+                        let (exitcode, stdout): (u8, String) = self.exec(core, task.clone());
                         rc = exitcode;
-                    }
-                },
-                ShellStatement::Cd(path) => {
-                    rc = self.change_directory(core, path.clone());
-                },
-                ShellStatement::Continue => {
-                    //Keep iterating
-                    continue;
-                },
-                ShellStatement::Dirs => {
-                    rc = self.dirs(core);
-                },
-                ShellStatement::Exec(task) => {
-                    let (exitcode, stdout): (u8, String) = self.exec(core, task.clone());
-                    rc = exitcode;
-                    output.push_str(stdout.as_str());
-                },
-                ShellStatement::ExecHistory(index)  => {
-                    rc = self.exec_history(core, *index);
-                },
-                ShellStatement::Exit(exitcode) => {
-                    self.exit(core, *exitcode);
-                },
-                ShellStatement::Export(key, value) => {
-                    rc = self.export(core, key.clone(), value.clone());
-                },
-                ShellStatement::For(what, when, perform) => {
-                    if let Some(exitcode) = self.foreach(core, what.clone(), when.clone(), perform.clone()) {
+                        output.push_str(stdout.as_str());
+                    },
+                    ShellStatement::ExecHistory(index)  => {
+                        rc = self.exec_history(core, *index);
+                    },
+                    ShellStatement::Exit(exitcode) => {
+                        self.exit(core, *exitcode);
+                    },
+                    ShellStatement::Export(key, value) => {
+                        rc = self.export(core, key.clone(), value.clone());
+                    },
+                    ShellStatement::For(what, when, perform) => {
+                        if let Some(exitcode) = self.foreach(core, what.clone(), when.clone(), perform.clone()) {
+                            rc = exitcode;
+                        }
+                    },
+                    ShellStatement::Function(name, expression) => {
+                        rc = self.function(core, name.clone(), expression.clone());
+                    },
+                    ShellStatement::If(what, perform_if, perform_else) => {
+                        if let Some(exitcode) = self.ifcond(core, what.clone(), perform_if.clone(), perform_else.clone()) {
+                            rc = exitcode;
+                        }
+                    },
+                    ShellStatement::Let(dest, operator1, operation, operator2) => {
+                        rc = self.let_perform(core, dest.clone(), operator1.clone(), operation.clone(), operator2.clone());
+                    },
+                    ShellStatement::PopdBack => {
+                        rc = self.popd_back(core);
+                    },
+                    ShellStatement::PopdFront => {
+                        rc = self.popd_front(core);
+                    },
+                    ShellStatement::Pushd(dir) => {
+                        rc = self.pushd(core, dir.clone());
+                    },
+                    ShellStatement::Read(prompt, length, result_key) => {
+                        rc = self.read(core, prompt.clone(), length.clone(), result_key.clone());
+                    },
+                    ShellStatement::Return(ret) => {
+                        return (*ret, output);
+                    },
+                    ShellStatement::Set(key, value) => {
+                        rc = self.set(core, key.clone(), value.clone());
+                    },
+                    ShellStatement::Source(file) => {
+                        rc = self.source(core, file.clone());
+                    },
+                    ShellStatement::Time(task) => {
+                        let (exitcode, stdout): (u8, String) = self.exec_time(core, task.clone());
                         rc = exitcode;
-                    }
-                },
-                ShellStatement::Function(name, expression) => {
-                    rc = self.function(core, name.clone(), expression.clone());
-                },
-                ShellStatement::If(what, perform_if, perform_else) => {
-                    if let Some(exitcode) = self.ifcond(core, what.clone(), perform_if.clone(), perform_else.clone()) {
-                        rc = exitcode;
-                    }
-                },
-                ShellStatement::Let(dest, operator1, operation, operator2) => {
-                    rc = self.let_perform(core, dest.clone(), operator1.clone(), operation.clone(), operator2.clone());
-                },
-                ShellStatement::PopdBack => {
-                    rc = self.popd_back(core);
-                },
-                ShellStatement::PopdFront => {
-                    rc = self.popd_front(core);
-                },
-                ShellStatement::Pushd(dir) => {
-                    rc = self.pushd(core, dir.clone());
-                },
-                ShellStatement::Read(prompt, length, result_key) => {
-                    rc = self.read(core, prompt.clone(), length.clone(), result_key.clone());
-                },
-                ShellStatement::Return(ret) => {
-                    return (*ret, output);
-                },
-                ShellStatement::Set(key, value) => {
-                    rc = self.set(core, key.clone(), value.clone());
-                },
-                ShellStatement::Source(file) => {
-                    rc = self.source(core, file.clone());
-                },
-                ShellStatement::Time(task) => {
-                    let (exitcode, stdout): (u8, String) = self.exec_time(core, task.clone());
-                    rc = exitcode;
-                    output.push_str(stdout.as_str());
-                },
-                ShellStatement::Unalias(alias) => {
-                    rc = self.unalias(core, alias.clone());
-                },
-                ShellStatement::Value(val) => {
-                    output = self.eval_value(core, val.clone());
-                },
-                ShellStatement::While(until, perform) => {
-                    if let Some(exitcode) = self.while_loop(core, until.clone(), perform.clone()) {
-                        rc = exitcode;
+                        output.push_str(stdout.as_str());
+                    },
+                    ShellStatement::Unalias(alias) => {
+                        rc = self.unalias(core, alias.clone());
+                    },
+                    ShellStatement::Value(val) => {
+                        output = self.eval_value(core, val.clone());
+                    },
+                    ShellStatement::While(until, perform) => {
+                        if let Some(exitcode) = self.while_loop(core, until.clone(), perform.clone()) {
+                            rc = exitcode;
+                        }
                     }
                 }
             }
+            //Verify if relation is satisfied
+            relation_satisfied = self.is_relation_satisfied(rc, statement.1);
             //look for inputs
             match core.sstream.receive() {
                 Ok(inbox) => {
@@ -1071,10 +1055,12 @@ impl ShellRunner {
         (rc, output)
     }
 
+    //@! Utils
+
     /// ### redirect_function_output
     ///
     /// Handle output redirections in a single method
-    fn redirect_function_output(&self, sstream: &ShellStream, redirection: Redirection, output: String) -> Result<(), ShellError> {
+    fn redirect_function_output(&self, _sstream: &ShellStream, redirection: Redirection, output: String) -> Result<(), ShellError> {
         match redirection {
             Redirection::Stdout => {
                 //Send output
@@ -1097,6 +1083,34 @@ impl ShellRunner {
             }
         }
         Ok(())
+    }
+
+    /// ### is_relation_satisfied
+    /// 
+    /// Checks whether a relation between two task is satisfied
+    fn is_relation_satisfied(&self, rc: u8, relation: TaskRelation) -> bool {
+        match relation {
+            TaskRelation::And => {
+                //Set next to chain; if exitcode is 0, relation is satisfied
+                if rc == 0 {
+                    true
+                } else {
+                    false
+                }
+            },
+            TaskRelation::Or => {
+                //If exitcode is successful relation is unsatisfied
+                if rc == 0 {
+                    false
+                } else {
+                    true
+                }
+            },
+            TaskRelation::Pipe | TaskRelation::Unrelated => {
+                //Relation is always satisfied
+                true
+            }
+        }
     }
 }
 
@@ -1230,7 +1244,7 @@ mod tests {
     #[test]
     fn test_runner_case() {
         let mut runner: ShellRunner = ShellRunner::new();
-        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Let's build our case statement - In this case 2 will be matched
         let case_match: ShellExpression = ShellExpression {
             statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]
@@ -1433,7 +1447,7 @@ mod tests {
         let mut runner: ShellRunner = ShellRunner::new();
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Prepare task to exec
-        let mut task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
+        let task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
         //Exec task
         let (rc, out): (u8, String) = runner.exec(&mut core, task);
         assert_eq!(rc, 0);
@@ -1443,7 +1457,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
                 }
@@ -1478,7 +1492,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 2);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     0 => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
@@ -1514,7 +1528,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO\n"))
                 }
@@ -1551,7 +1565,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 2);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     0 => assert_eq!(*stdout.as_ref().unwrap(), String::from("INPUT STRING\n")),
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
@@ -1589,7 +1603,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
                 }
@@ -1626,7 +1640,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
                 }
@@ -1691,7 +1705,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
                 }
@@ -1726,7 +1740,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("OUTPUT\n"))
                 }
@@ -1763,7 +1777,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 2);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     0 => assert_eq!(*stdout.as_ref().unwrap(), String::from("FOOBAR\n")),
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HI\n"))
@@ -1816,7 +1830,7 @@ mod tests {
         println!("Exec Inbox: {:?}", inbox);
         assert_eq!(inbox.len(), 1);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 match index {
                     _ => assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n")),
                 }
@@ -1848,7 +1862,7 @@ mod tests {
         let mut runner: ShellRunner = ShellRunner::new();
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Prepare task to exec
-        let mut task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
+        let task: Task = Task::new(vec![String::from("echo"), String::from("HELLO"), String::from("WORLD")], Redirection::Stdout, Redirection::Stderr);
         //Exec task
         let (rc, out): (u8, String) = runner.exec_time(&mut core, task);
         assert_eq!(rc, 0);
@@ -1859,7 +1873,7 @@ mod tests {
         assert_eq!(inbox.len(), 2);
         for (index, message) in inbox.iter().enumerate() {
             if index == 0 {
-                if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                if let ShellStreamMessage::Output((stdout, _)) = message {
                     assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO WORLD\n"));
                 } else {
                     panic!("Not an output");
@@ -1877,7 +1891,7 @@ mod tests {
     #[test]
     fn test_runner_exit() {
         let mut runner: ShellRunner = ShellRunner::new();
-        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         runner.exit(&mut core, 0);
         assert_eq!(runner.exit_flag.unwrap(), 0);
     }
@@ -1885,7 +1899,7 @@ mod tests {
     #[test]
     fn test_runner_export() {
         let mut runner: ShellRunner = ShellRunner::new();
-        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Simple export
         assert_eq!(runner.export(&mut core, String::from("FOO"), ShellExpression {
             statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
@@ -1928,7 +1942,7 @@ mod tests {
         let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
         assert_eq!(inbox.len(), 4);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 let mut filename: String = stdout.as_ref().unwrap().clone();
                 filename.pop(); //Remove newline
                 //Verify filename is the same
@@ -2196,7 +2210,7 @@ mod tests {
         //Read
         assert_eq!(runner.read(&mut core, Some(String::from("type something")), Some(5), Some(String::from("OUTPUT"))), 0);
         //Prompt is shown
-        if let ShellStreamMessage::Output((stdout, stderr)) = &ustream.receive().unwrap()[0] {
+        if let ShellStreamMessage::Output((stdout, _)) = &ustream.receive().unwrap()[0] {
             //Must be prompt
             assert_eq!(*stdout.as_ref().unwrap(), String::from("type something"));
         } else {
@@ -2208,7 +2222,7 @@ mod tests {
         assert!(ustream.send(UserStreamMessage::Input(String::from("HI_THERE"))));
         runner.read(&mut core, None, None, None);
         //Prompt is shown
-        if let ShellStreamMessage::Output((stdout, stderr)) = &ustream.receive().unwrap()[0] {
+        if let ShellStreamMessage::Output((stdout, _)) = &ustream.receive().unwrap()[0] {
             //Must be prompt
             assert_eq!(*stdout.as_ref().unwrap(), String::from(""));
         } else {
@@ -2234,7 +2248,7 @@ mod tests {
     #[test]
     fn test_runner_set() {
         let mut runner: ShellRunner = ShellRunner::new();
-        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Simple export
         assert_eq!(runner.set(&mut core, String::from("FOO"), ShellExpression {
             statements: vec![(ShellStatement::Value(String::from("BAR")), TaskRelation::Unrelated)]
@@ -2284,7 +2298,7 @@ mod tests {
         let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
         assert_eq!(inbox.len(), 4);
         for (index, message) in inbox.iter().enumerate() {
-            if let ShellStreamMessage::Output((stdout, stderr)) = message {
+            if let ShellStreamMessage::Output((stdout, _)) = message {
                 let mut value: String = stdout.as_ref().unwrap().clone();
                 value.pop(); //Remove newline
                 //Verify value is the same
@@ -2371,6 +2385,7 @@ mod tests {
         };
         //Run expression
         let rc: u8 = runner.run(&mut core, expression);
+        assert_eq!(rc, 1); //Exit with rc 1
         /*
             Verify messages:
 
@@ -2392,7 +2407,7 @@ mod tests {
         for (index, message) in inbox.iter().enumerate() {
             match index {
                 0 => {
-                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                    if let ShellStreamMessage::Output((stdout, _))  = message {
                         assert_eq!(*stdout.as_ref().unwrap(), String::from(">>"));
                     } else {
                         panic!("Not an output");
@@ -2406,21 +2421,21 @@ mod tests {
                     }
                 },
                 2 => {
-                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                    if let ShellStreamMessage::Output((stdout, _))  = message {
                         assert_eq!(*stdout.as_ref().unwrap(), String::from("HELLO\n"));
                     } else {
                         panic!("Not an output");
                     }
                 },
                 3 => {
-                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                    if let ShellStreamMessage::Output((stdout, _))  = message {
                         assert_eq!(*stdout.as_ref().unwrap(), format!("{}\n", files[0]));
                     } else {
                         panic!("Not an output");
                     }
                 },
                 4 => {
-                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                    if let ShellStreamMessage::Output((stdout, _))  = message {
                         assert_eq!(*stdout.as_ref().unwrap(), format!("{}\n", files[1]));
                     } else {
                         panic!("Not an output");
@@ -2462,7 +2477,7 @@ mod tests {
                     }
                 },
                 9 => {
-                    if let ShellStreamMessage::Output((stdout, stderr))  = message {
+                    if let ShellStreamMessage::Output((stdout, _))  = message {
                         assert_eq!(*stdout.as_ref().unwrap(), String::from("TIME\n"));
                     } else {
                         panic!("Not an output");
@@ -2486,6 +2501,50 @@ mod tests {
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("7"));
         //Verify Alias
         assert!(core.alias_get(&String::from("ll")).is_none());
+    }
+    
+    #[test]
+    fn test_runner_run_with_relations() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        //Instantiate cores
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        //Prepare expression
+        //cd /tmp/ (OK) AND cd /fjggtt/ (FAILS) AND cd /bin/ (won't run) OR echo FOO OR echo BAR
+        //Expected result:
+        // Wrkdir: /tmp/
+        // Output: FOO
+        let expression: ShellExpression = ShellExpression {
+            statements: vec![
+                (ShellStatement::Cd(PathBuf::from("/tmp/")), TaskRelation::And),
+                (ShellStatement::Cd(PathBuf::from("/fjggtt/")), TaskRelation::And),
+                (ShellStatement::Cd(PathBuf::from("/bin/")), TaskRelation::Or),
+                (ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("FOO")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Or),
+                (ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("BAR")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated),
+                (ShellStatement::Cd(PathBuf::from("/onett/")), TaskRelation::Unrelated),
+            ]
+        };
+        let rc: u8 = runner.run(&mut core, expression);
+        let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
+        println!("Runner::run_with_relations INBOX {:?}", inbox);
+        assert_eq!(inbox.len(), 3);
+        if let ShellStreamMessage::Error(err) = inbox.get(0).unwrap() {
+            assert_eq!(discriminant(err), discriminant(&ShellError::NoSuchFileOrDirectory(PathBuf::from("/fjggtt/"))));
+        } else {
+            panic!("Not an error");
+        }
+        if let ShellStreamMessage::Output((stdout, _)) = inbox.get(1).unwrap() {
+            assert_eq!(*stdout.as_ref().unwrap(), String::from("FOO\n"));
+        } else {
+            panic!("Not an output");
+        }
+        if let ShellStreamMessage::Error(err) = inbox.get(0).unwrap() {
+            assert_eq!(discriminant(err), discriminant(&ShellError::NoSuchFileOrDirectory(PathBuf::from("/onett/"))));
+        } else {
+            panic!("Not an error");
+        }
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
+        //Rc will be 1
+        assert_eq!(rc, 1);
     }
 
     #[test]
