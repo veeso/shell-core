@@ -104,7 +104,7 @@ pub enum ShellError {
 /// ## ShellFunction
 /// 
 /// The Shell Function represents a shell function, which is made up of a name and a vector of statements
-#[derive(Clone, std::fmt::Debug)]
+#[derive(Clone, PartialEq, std::fmt::Debug)]
 pub struct ShellExpression {
     statements: Vec<(ShellStatement, TaskRelation)>
 }
@@ -307,20 +307,6 @@ pub trait ParseStatement {
     fn parse(&self, core: &ShellCore, statement: &String) -> Result<ShellExpression, ParserError>;
 }
 
-//@! Traits implementation
-
-impl Clone for Redirection {
-    fn clone(&self) -> Redirection {
-        match self {
-            Redirection::File(file, file_mode) => {
-                Redirection::File(file.clone(), file_mode.clone())
-            }
-            Redirection::Stderr => Redirection::Stderr,
-            Redirection::Stdout => Redirection::Stdout,
-        }
-    }
-}
-
 //@! Signals
 
 /// ## UnixSignal
@@ -376,4 +362,200 @@ pub enum TaskRelation {
     Or,
     Pipe,
     Unrelated,
+}
+
+//@! Traits implementation
+
+impl Clone for Redirection {
+    fn clone(&self) -> Redirection {
+        match self {
+            Redirection::File(file, file_mode) => {
+                Redirection::File(file.clone(), file_mode.clone())
+            }
+            Redirection::Stderr => Redirection::Stderr,
+            Redirection::Stdout => Redirection::Stdout,
+        }
+    }
+}
+
+impl PartialEq for ShellStatement {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            ShellStatement::Alias(name, value) => {
+                if let ShellStatement::Alias(name_cmp, value_cmp) = other {
+                    (name == name_cmp) && (value == value_cmp)
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Break => {
+                if let ShellStatement::Break = other {
+                    true
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Case(expr, cases) => {
+                if let ShellStatement::Case(expr_cmp, cases_cmp) = other {
+                    expr == expr_cmp && cases == cases_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Cd(path) => {
+                if let ShellStatement::Cd(path_cmp) = other {
+                    path == path_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Continue => {
+                if let ShellStatement::Continue = other {
+                    true
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Dirs => {
+                if let ShellStatement::Dirs = other {
+                    true
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Exec(t) => {
+                if let ShellStatement::Exec(t_cmp) = other {
+                    t.command == t_cmp.command
+                } else {
+                    false
+                }
+            },
+            ShellStatement::ExecHistory(i) => {
+                if let ShellStatement::ExecHistory(i_cmp) = other {
+                    i == i_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Exit(rc) => {
+                if let ShellStatement::Exit(rc_cmp) = other {
+                    rc == rc_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Export(var, expr) => {
+                if let ShellStatement::Export(var_cmp, expr_cmp) = other {
+                    var == var_cmp && expr == expr_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::For(var, cond, perform) => {
+                if let ShellStatement::For(var_cmp, cond_cmp, perform_cmp) = other {
+                    var == var_cmp && cond == cond_cmp && perform == perform_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Function(func, expr) => {
+                if let ShellStatement::Function(func_cmp, expr_cmp) = other {
+                    func == func_cmp && expr == expr_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::If(condition, if_perform, else_perform) => {
+                if let ShellStatement::If(condition_cmp, if_perform_cmp, else_perform_cmp) = other {
+                    condition == condition_cmp && if_perform == if_perform_cmp && else_perform == else_perform_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Let(dest, op_a, op, op_b) => {
+                if let ShellStatement::Let(dest_cmp, op_a_cmp, op_cmp, op_b_cmp) = other {
+                    dest == dest_cmp && op_a == op_a_cmp && op == op_cmp && op_b == op_b_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::PopdBack => {
+                if let ShellStatement::PopdBack = other {
+                    true
+                } else {
+                     false
+                 }
+            },
+            ShellStatement::PopdFront => {
+                if let ShellStatement::PopdFront = other {
+                    true
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Pushd(path) => {
+                if let ShellStatement::Pushd(path_cmp) = other {
+                    path == path_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Read(prompt, length, result) => {
+                if let ShellStatement::Read(prompt_cmp, length_cmp, result_cmp) = other {
+                    prompt == prompt_cmp && length == length_cmp && result == result_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Return(rc) => {
+                if let ShellStatement::Return(rc_cmp) = other {
+                    rc == rc_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Set(var, expr) => {
+                if let ShellStatement::Set(var_cmp, expr_cmp) = other {
+                    var == var_cmp && expr == expr_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Source(path) => {
+                if let ShellStatement::Source(path_cmp) = other {
+                    path == path_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Time(t) => {
+                if let ShellStatement::Time(t_cmp) = other {
+                    t.command == t_cmp.command
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Unalias(alias) => {
+                if let ShellStatement::Unalias(alias_cmp) = other {
+                    alias == alias_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::Value(val) => {
+                if let ShellStatement::Value(val_cmp) = other {
+                    val == val_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::While(cond, perform) => {
+                if let ShellStatement::While(cond_cmp, perform_cmp) = other {
+                    cond == cond_cmp && perform == perform_cmp
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
