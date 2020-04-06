@@ -559,3 +559,115 @@ impl PartialEq for ShellStatement {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_lib_shell_statement_eq() {
+        //Alias
+        assert_eq!(ShellStatement::Alias(None, None), ShellStatement::Alias(None, None));
+        assert_ne!(ShellStatement::Alias(Some(String::from("foo")), Some(String::from("bar"))), ShellStatement::Alias(None, None));
+        assert_ne!(ShellStatement::Alias(Some(String::from("foo")), Some(String::from("bar"))), ShellStatement::Break);
+        //Break
+        assert_eq!(ShellStatement::Break, ShellStatement::Break);
+        assert_ne!(ShellStatement::Break, ShellStatement::Alias(None, None));
+        //Case
+        let case_match: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]
+        };
+        let case_match2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(ShellStatement::Case(case_match.clone(), vec![]), ShellStatement::Case(case_match.clone(), vec![]));
+        assert_ne!(ShellStatement::Case(case_match.clone(), vec![]), ShellStatement::Case(case_match2.clone(), vec![]));
+        assert_ne!(ShellStatement::Case(case_match.clone(), vec![]), ShellStatement::Break);
+        //Cd
+        assert_eq!(ShellStatement::Cd(PathBuf::from("/tmp/")), ShellStatement::Cd(PathBuf::from("/tmp/")));
+        assert_ne!(ShellStatement::Cd(PathBuf::from("/tmp/")), ShellStatement::Cd(PathBuf::from("/home/")));
+        assert_ne!(ShellStatement::Cd(PathBuf::from("/tmp/")), ShellStatement::Break);
+        //Continue
+        assert_eq!(ShellStatement::Continue, ShellStatement::Continue);
+        assert_ne!(ShellStatement::Continue, ShellStatement::Alias(None, None));
+        //Dirs
+        assert_eq!(ShellStatement::Dirs, ShellStatement::Dirs);
+        assert_ne!(ShellStatement::Dirs, ShellStatement::Alias(None, None));
+        //Exec
+        let task: Task = Task::new(vec![String::from("ls")], Redirection::Stdout, Redirection::Stderr);
+        assert_eq!(ShellStatement::Exec(task.clone()), ShellStatement::Exec(task.clone()));
+        assert_ne!(ShellStatement::Exec(task.clone()), ShellStatement::Exec(Task::new(vec![String::from("echo")], Redirection::Stdout, Redirection::Stderr)));
+        assert_ne!(ShellStatement::Exec(task.clone()), ShellStatement::Break);
+        //Exec history
+        assert_eq!(ShellStatement::ExecHistory(8), ShellStatement::ExecHistory(8));
+        assert_ne!(ShellStatement::ExecHistory(8), ShellStatement::ExecHistory(128));
+        assert_ne!(ShellStatement::ExecHistory(8), ShellStatement::Break);
+        //Exit
+        assert_eq!(ShellStatement::Exit(0), ShellStatement::Exit(0));
+        assert_ne!(ShellStatement::Exit(0), ShellStatement::Exit(128));
+        assert_ne!(ShellStatement::Exit(0), ShellStatement::Break);
+        //Export
+        assert_eq!(ShellStatement::Export(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Export(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Export(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Export(String::from("bar"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Export(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //For
+        assert_eq!(ShellStatement::For(String::from("VAR"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::For(String::from("VAR"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::For(String::from("VAR"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::For(String::from("VAR2"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::For(String::from("VAR"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //Function
+        assert_eq!(ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}), ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}), ShellStatement::Function(String::from("bar"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //If
+        assert_eq!(ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None));
+        assert_ne!(ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(3), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None));
+        assert_ne!(ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), ShellStatement::Break);
+        //Let
+        assert_eq!(ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}), ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}), ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Subtract, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //Popdback
+        assert_eq!(ShellStatement::PopdBack, ShellStatement::PopdBack);
+        assert_ne!(ShellStatement::PopdBack, ShellStatement::Break);
+        //Popdfront
+        assert_eq!(ShellStatement::PopdFront, ShellStatement::PopdFront);
+        assert_ne!(ShellStatement::PopdFront, ShellStatement::Break);
+        //Pushd
+        assert_eq!(ShellStatement::Pushd(PathBuf::from("/tmp/")), ShellStatement::Pushd(PathBuf::from("/tmp/")));
+        assert_ne!(ShellStatement::Pushd(PathBuf::from("/tmp/")), ShellStatement::Pushd(PathBuf::from("/home/")));
+        assert_ne!(ShellStatement::Pushd(PathBuf::from("/tmp/")), ShellStatement::Break);
+        //Read
+        assert_eq!(ShellStatement::Read(None, None, None), ShellStatement::Read(None, None, None));
+        assert_ne!(ShellStatement::Read(None, None, None), ShellStatement::Read(None, Some(32), None));
+        assert_ne!(ShellStatement::Read(None, None, None), ShellStatement::Break);
+        //Return
+        assert_eq!(ShellStatement::Return(0), ShellStatement::Return(0));
+        assert_ne!(ShellStatement::Return(0), ShellStatement::Return(2));
+        assert_ne!(ShellStatement::Return(0), ShellStatement::Break);
+        //Set
+        assert_eq!(ShellStatement::Set(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Set(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Set(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Set(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::Set(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //Source
+        assert_eq!(ShellStatement::Source(PathBuf::from("/tmp/set.sh")), ShellStatement::Source(PathBuf::from("/tmp/set.sh")));
+        assert_ne!(ShellStatement::Source(PathBuf::from("/tmp/set.sh")), ShellStatement::Source(PathBuf::from("/tmp/get.sh")));
+        assert_ne!(ShellStatement::Source(PathBuf::from("/tmp/set.sh")), ShellStatement::Break);
+        //Time
+        assert_eq!(ShellStatement::Time(Task::new(vec![String::from("echo")], Redirection::Stdout, Redirection::Stderr)), ShellStatement::Time(Task::new(vec![String::from("echo")], Redirection::Stdout, Redirection::Stderr)));
+        assert_ne!(ShellStatement::Time(Task::new(vec![String::from("echo")], Redirection::Stdout, Redirection::Stderr)), ShellStatement::Time(Task::new(vec![String::from("ls")], Redirection::Stdout, Redirection::Stderr)));
+        assert_ne!(ShellStatement::Time(Task::new(vec![String::from("echo")], Redirection::Stdout, Redirection::Stderr)), ShellStatement::Break);
+        //Unalias
+        assert_eq!(ShellStatement::Unalias(String::from("ll")), ShellStatement::Unalias(String::from("ll")));
+        assert_ne!(ShellStatement::Unalias(String::from("ll")), ShellStatement::Unalias(String::from("filesize")));
+        assert_ne!(ShellStatement::Unalias(String::from("ll")), ShellStatement::Break);
+        //Value
+        assert_eq!(ShellStatement::Value(String::from("5")), ShellStatement::Value(String::from("5")));
+        assert_ne!(ShellStatement::Value(String::from("5")), ShellStatement::Value(String::from("15")));
+        assert_ne!(ShellStatement::Value(String::from("5")), ShellStatement::Break);
+        //While
+        assert_eq!(ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]}));
+        assert_ne!(ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Value(String::from("5")));
+    }
+}
