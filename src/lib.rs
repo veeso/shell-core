@@ -291,6 +291,7 @@ pub struct ParserError {
 pub enum ParserErrorCode {
     Incomplete,
     BadToken,
+    TooManyArgs,
 }
 
 /// ## ParseStatement
@@ -303,7 +304,7 @@ pub trait ParseStatement {
     ///
     /// e.g. if the statement is a variable assignment, the method MUST call the shellcore set method.
     /// Obviously, in case of error the core method hasn't to be called
-    fn parse(&self, statement: &String) -> Result<ShellExpression, ParserError>;
+    fn parse(&self, core: &ShellCore, statement: &String) -> Result<ShellExpression, ParserError>;
 }
 
 //@! Traits implementation

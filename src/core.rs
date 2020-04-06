@@ -361,7 +361,7 @@ impl ShellCore {
     /// ### resolve_path
     /// 
     /// Resolve path
-    pub(crate) fn resolve_path(&self, path: String) -> PathBuf {
+    pub fn resolve_path(&self, path: String) -> PathBuf {
         let mut resolved_path: String = path.clone();
         //If path starts with '~', replace ~ with home dir
         if resolved_path.starts_with("~") {
@@ -442,7 +442,7 @@ impl ShellCore {
             _ => stdin
         };
         //Try to parse line
-        match self.parser.parse(&stdin) {
+        match self.parser.parse(&self, &stdin) {
             Ok(expression) => {
                 //Push stdin to history
                 self.history_push(stdin.clone());
@@ -515,7 +515,7 @@ impl ShellCore {
             }
         };
         //Parse file
-        match self.parser.parse(&file_content) {
+        match self.parser.parse(&self, &file_content) {
             Ok(expression) => {
                 Ok(self.eval(expression))
             },
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn test_core_new() {
         //Instantiate Core
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 128, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 128, Box::new(Bash::new()));
         //Verify core parameters
         assert_eq!(core.state, ShellState::Idle);
         assert_eq!(core.exit_code, 0);
@@ -687,14 +687,14 @@ mod tests {
         assert_eq!(core.history.len(), 0);
         assert_eq!(core.buf_in.len(), 0);
         //Test without working directory
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         assert_eq!(core.wrk_dir, core.home_dir);
     }
 
     #[test]
     fn test_core_alias() {
         //Instantiate Core
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         //Set alias
         assert!(core.alias_set(String::from("ll"), String::from("ls -l")));
         //Get alias
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_core_change_dir() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(Some(PathBuf::from("/tmp/")), 128, Box::new(Bash::new()));
         //Change directory
         assert!(core.change_directory(PathBuf::from("/var/")).is_ok());
         //Verify current directory/previous directory
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_core_dirs() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         //Dirs contains only home once the object is istantiated
         assert_eq!(core.dirs().len(), 1);
         assert_eq!(core.dirs()[0], core.home_dir.clone());
@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_core_get_files() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         //CD to tmp
         assert!(core.change_directory(PathBuf::from("/tmp/")).is_ok());
         //Create tmp files
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_core_exit() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         core.exit();
         assert_eq!(core.state, ShellState::Terminated);
         assert_eq!(core.user.len(), 0);
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_core_functions() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         //Get unexisting function
         assert!(core.function_get(&String::from("testfunc")).is_none());
         //Create function
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn test_core_getters() {
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         assert_eq!(core.get_home(), core.home_dir.clone());
         assert_eq!(core.get_prev_dir(), core.home_dir.clone());
         assert_eq!(core.get_wrkdir(), core.wrk_dir.clone());
@@ -833,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_core_history() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2, Box::new(Bash {})); //@! History size => 2
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 2, Box::new(Bash::new())); //@! History size => 2
         //Verify history is empty
         assert_eq!(core.history_get().len(), 0);
         //Try to get from history
@@ -868,7 +868,7 @@ mod tests {
     
     #[test]
     fn test_core_misc_resolve_path() {
-        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash {}));
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 2048, Box::new(Bash::new()));
         assert_eq!(core.resolve_path(String::from("/tmp/")), PathBuf::from("/tmp/"));
         assert_eq!(core.resolve_path(String::from("~")), core.home_dir.clone());
         let mut dev_home_path: PathBuf = core.home_dir.clone();
@@ -879,7 +879,7 @@ mod tests {
     #[test]
     fn test_core_misc_reverse_search() {
         //Push some entries to the history
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 64, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 64, Box::new(Bash::new()));
         core.history_push(String::from("git status"));
         core.history_push(String::from("git commit -a"));
         core.history_push(String::from("git commit README.md"));
@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_core_storage() {
-        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash::new()));
         //Try to get from storage a value which is not set
         assert!(core.value_get(&String::from("FOO")).is_none());
         assert!(core.storage_get(&String::from("FOO")).is_none());

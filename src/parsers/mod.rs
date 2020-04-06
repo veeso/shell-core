@@ -34,7 +34,7 @@ impl ParserError {
     /// ## new
     ///
     /// Instantiate a new Task Error struct
-    pub(crate) fn new(code: ParserErrorCode, message: String) -> ParserError {
+    pub fn new(code: ParserErrorCode, message: String) -> ParserError {
         ParserError {
             code: code,
             message: message,
