@@ -83,7 +83,7 @@ impl Bash {
         Bash {}
     }
 
-    /// ### parse lines
+    /// ### parse_lines
     /// 
     /// Recursive function which parse lines
     fn parse_lines(&self, core: &ShellCore, mut state: BashParserState, mut input: String) -> Result<ShellExpression, ParserError> {
@@ -92,6 +92,55 @@ impl Bash {
         loop {
 
         }
+    }
+
+    /// ### readline
+    /// 
+    /// Get arguments from input string
+    fn readline(&self, input: &String) -> Result<Vec<String>, ParserError> {
+        let mut argv: Vec<String> = Vec::new();
+        let mut states: BashParserState = BashParserState::new();
+        let mut buffer: Vec<String> = Vec::new();
+        //Split by word
+        let mut index: usize = 0;
+        for word in input.split_whitespace() {
+            let mut word_buf: String = String::with_capacity(word.len());
+            //Iterate over word
+            for c in word.chars() {
+                let mut skip_char: bool = false;
+                let prev_char: char = states.previous_char;
+                //If quote block is closed
+                if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && !states.is_escaped() {
+                    skip_char = true;
+                }
+                if let Some(err) = states.update_state(c) {
+                    return Err(ParserError::new(err, String::from(format!("bash: error at {}", index))))
+                }
+                index += 1;
+                //If quote block is opened, ignore char
+                if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && prev_char != '\\' {
+                    skip_char = true;
+                }
+                //Ignore escape block opener
+                if states.is_escaped() && c == '\\' {
+                    skip_char = true;
+                }
+                if ! skip_char {
+                    word_buf.push(c);
+                }
+            }
+            //Push word buffer if big enough
+            if word_buf.len() > 0 {
+                buffer.push(word_buf);
+            }
+            index += 1; //Increment cause of whitespace
+            //If states stack is empty, push argument
+            if states.empty() {
+                argv.push(buffer.join(" "));
+                buffer.clear();
+            }
+        }
+        Ok(argv)
     }
 
     //@! Statements parsers
@@ -105,11 +154,10 @@ impl Bash {
         let mut chars_to_remove: usize = 0; //Amount of characters to remove from input
         //Iterate over input
         for (index, c) in input.chars().enumerate() {
-            println!("{}; {:?}", c, state);
-            if c != ';' && c != ' ' && state.previous_char == ' ' && !state.is_escaped() && buffer.len() > 0 { //If previous is whitespace and current is not ; or space and not escaped and buffer IS NOT empty, there are too many arguments
+            if (c != ';' && c != '\n' && c != '|' && c != '&' && c != ' ') && state.previous_char == ' ' && !state.is_escaped() && buffer.len() > 0 { //If previous is whitespace and current is not ; or space and not escaped and buffer IS NOT empty, there are too many arguments
                 *input = String::from(&input[chars_to_remove..]);
                 return Err(ParserError::new(ParserErrorCode::TooManyArgs, String::from("bash: cd: too many arguments")))
-            } else if (c == ';' || c == '\n') && !state.is_escaped() { //Always break on ; or newline
+            } else if (c == ';' || c == '\n' || c == '|' || c == '&') && !state.is_escaped() { //Always break on ; or newline or other delimeters
                 let _ = state.update_state(c);
                 break;
             } else if !state.is_escaped() && ! state.is_quoted() && (c == '"' || c == '\'') {
@@ -177,10 +225,6 @@ impl BashParserState {
             } else { //Otherwise becomes escaped
                 self.stack_state(BashParserBlock::Escaped);
             }
-        } else {
-            if self.is_on_top(BashParserBlock::Escaped) { //If was escaped, pop escape
-                self.pop();
-            }
         }
         if ! self.is_on_top(BashParserBlock::Escaped) {
             if ch == '"' { //Quotes
@@ -225,9 +269,19 @@ impl BashParserState {
                 }
             }
         }
+        if self.is_escaped() && ch != '\\' { //If was escaped, pop escape
+            self.pop();
+        }
         //Eventually update previous ch
         self.previous_char = ch;
         None
+    }
+
+    /// ### empty
+    /// 
+    /// Returns whether the states stack is empty
+    pub(crate) fn empty(&self) -> bool {
+        self.states.len() == 0
     }
 
     /// ### is_quoted
@@ -373,6 +427,17 @@ mod tests {
     use crate::UserStream;
 
     #[test]
+    fn test_bash_parser_readline() {
+        let parser: Bash = Bash::new();
+        assert_eq!(parser.readline(&String::from("cd /tmp/")).unwrap(), vec![String::from("cd"), String::from("/tmp/")]);
+        assert_eq!(parser.readline(&String::from("echo \"foo bar\"")).unwrap(), vec![String::from("echo"), String::from("foo bar")]);
+        assert_eq!(parser.readline(&String::from("echo \"'foo' 'bar'\"")).unwrap(), vec![String::from("echo"), String::from("'foo' 'bar'")]);
+        assert_eq!(parser.readline(&String::from("echo \"\\\"foo bar\\\"\"")).unwrap(), vec![String::from("echo"), String::from("\"foo bar\"")]);
+        //Try error
+        assert!(parser.readline(&String::from("echo \"$(pw\"d)")).is_err());
+    }
+
+    #[test]
     fn test_bash_parser_cd() {
         let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
         let mut states: BashParserState = BashParserState::new();
@@ -414,12 +479,17 @@ mod tests {
         let mut input: String = String::from("/home/\\\"foo\\\"");
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/\\\"foo\\\"")));
         assert_eq!(input, String::from("")); //Should be empty
+        //With and
+        let mut input: String = String::from("/tmp &&");
+        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
+        assert_eq!(input, String::from("&&")); //Should be &&
     }
 
     #[test]
     fn test_bash_parser_state_new() {
         let parser_state: BashParserState = BashParserState::new();
         assert_eq!(parser_state.states.len(), 0);
+        assert!(parser_state.empty());
         assert_eq!(parser_state.previous_char, ' ');
     }
 
