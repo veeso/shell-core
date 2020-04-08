@@ -26,6 +26,7 @@
 //
 
 use crate::{ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 pub struct Bash {}
@@ -70,7 +71,11 @@ impl ParseStatement for Bash {
     fn parse(&self, core: &ShellCore, statement: &String) -> Result<ShellExpression, ParserError> {
         //Instantiate BashParserState
         let mut state: BashParserState = BashParserState::new();
-        self.parse_lines(core, state, statement.to_string())
+        let mut argv: VecDeque<String> = match self.readline(statement) {
+            Ok(argv) => argv,
+            Err(err) => return Err(err)
+        };
+        self.parse_lines(core, state, argv)
     }
 }
 
@@ -86,7 +91,7 @@ impl Bash {
     /// ### parse_lines
     /// 
     /// Recursive function which parse lines
-    fn parse_lines(&self, core: &ShellCore, mut state: BashParserState, mut input: String) -> Result<ShellExpression, ParserError> {
+    fn parse_lines(&self, core: &ShellCore, mut state: BashParserState, mut input: VecDeque<String>) -> Result<ShellExpression, ParserError> {
         //Start iterating
         let mut statements: Vec<(ShellStatement, TaskRelation)> = Vec::new();
         loop {
@@ -97,50 +102,220 @@ impl Bash {
     /// ### readline
     /// 
     /// Get arguments from input string
-    fn readline(&self, input: &String) -> Result<Vec<String>, ParserError> {
-        let mut argv: Vec<String> = Vec::new();
+    fn readline(&self, input: &String) -> Result<VecDeque<String>, ParserError> {
+        let mut argv: VecDeque<String> = VecDeque::new();
         let mut states: BashParserState = BashParserState::new();
         let mut buffer: Vec<String> = Vec::new();
         //Split by word
         let mut index: usize = 0;
-        for word in input.split_whitespace() {
-            let mut word_buf: String = String::with_capacity(word.len());
-            //Iterate over word
-            for c in word.chars() {
-                let mut skip_char: bool = false;
-                let prev_char: char = states.previous_char;
-                //If quote block is closed
-                if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && !states.is_escaped() {
-                    skip_char = true;
+        for line in input.split("\n") { //Iter over lines
+            for word in line.split_whitespace() { //Iter over word in lines
+                let mut word_buf: String = String::with_capacity(word.len());
+                //Iterate over word
+                for (i, c) in word.chars().enumerate() {
+                    let next: char = word.chars().nth(i + 1).unwrap_or(' ');
+                    let mut skip_char: bool = false;
+                    let prev_char: char = states.previous_char;
+                    //If quote block is closed
+                    if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && !states.is_escaped() {
+                        skip_char = true;
+                    }
+                    if let Some(err) = states.update_state(c) {
+                        return Err(ParserError::new(err, String::from(format!("bash: error at {}", index))))
+                    }
+                    index += 1;
+                    //If quote block is opened, ignore char
+                    if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && prev_char != '\\' {
+                        skip_char = true;
+                    }
+                    //Ignore escape block opener
+                    if states.is_escaped() && c == '\\' && next == '"' {
+                        skip_char = true;
+                    }
+                    if ! skip_char {
+                        word_buf.push(c);
+                    }
                 }
-                if let Some(err) = states.update_state(c) {
-                    return Err(ParserError::new(err, String::from(format!("bash: error at {}", index))))
+                //Push word buffer if big enough
+                if word_buf.len() > 0 {
+                    //Iter over word buffer and split some tokens
+                    let mut remainder: Option<char> = None;
+                    let mut escaped: bool = false;
+                    let orig_word_buf = word_buf.clone();
+                    for (index, c) in orig_word_buf.chars().enumerate() {
+                        let next: Option<char> = orig_word_buf.chars().nth(index + 1);
+                        if let Some(prev) = remainder {
+                            //Look for &&
+                            if prev == '&' && c == '&' {
+                                let prev_part: String = String::from(&word_buf[..index - 1]);
+                                if prev_part.len() > 0 {
+                                    argv.push_back(prev_part); //Push word before &&
+                                }
+                                //Push &&
+                                argv.push_back(String::from("&&"));
+                                //Word buf becomes from the first char after &&
+                                word_buf = String::from(&word_buf[index + 1..]);
+                            } else if prev == '|' && c == '|' {
+                                let prev_part: String = String::from(&word_buf[..index - 1]);
+                                if prev_part.len() > 0 {
+                                    argv.push_back(prev_part); //Push word before ||
+                                }
+                                //Push ||
+                                argv.push_back(String::from("||"));
+                                //Word buf becomes from the first char after ||
+                                word_buf = String::from(&word_buf[index + 1..]);
+                            } else if prev == '>' && c == '>' {
+                                let prev_part: String = String::from(&word_buf[..index - 1]);
+                                if prev_part.len() > 0 {
+                                    argv.push_back(prev_part); //Push word before >>
+                                }
+                                //Push >>
+                                argv.push_back(String::from(">>"));
+                                //Word buf becomes from the first char after >>
+                                word_buf = String::from(&word_buf[index + 1..]);
+                            } else if prev == '<' && c == '<' {
+                                let prev_part: String = String::from(&word_buf[..index - 1]);
+                                if prev_part.len() > 0 {
+                                    argv.push_back(prev_part); //Push word before <<
+                                }
+                                //Push <<
+                                argv.push_back(String::from("<<"));
+                                //Word buf becomes from the first char after <<
+                                word_buf = String::from(&word_buf[index + 1..]);
+                            }
+                        } else if ! escaped {
+                            //Check if pipe
+                            if let Some(next) = next {
+                                if c == '|' && next != '|' {
+                                    let prev_part: String = String::from(&word_buf[..index]);
+                                    if prev_part.len() > 0 {
+                                        argv.push_back(prev_part); //Push word before |
+                                    }
+                                    //Push &&
+                                    argv.push_back(String::from("|"));
+                                    //Word buf becomes from the first char after |
+                                    word_buf = String::from(&word_buf[index + 1..]);
+                                } else if c == '|' && next == '|' {
+                                    //Set remainder
+                                    remainder = Some('|');
+                                } else if c == '>' && next != '>' {
+                                    let prev_part: String = String::from(&word_buf[..index]);
+                                    if prev_part.len() > 0 {
+                                        argv.push_back(prev_part); //Push word before >
+                                    }
+                                    //Push >
+                                    argv.push_back(String::from(">"));
+                                    //Word buf becomes from the first char after >
+                                    word_buf = String::from(&word_buf[index + 1..]);
+                                } else if c == '>' && next == '>' {
+                                    //Set remainder
+                                    remainder = Some('>');
+                                } else if c == '<' && next != '<' {
+                                    let prev_part: String = String::from(&word_buf[..index]);
+                                    if prev_part.len() > 0 {
+                                        argv.push_back(prev_part); //Push word before <
+                                    }
+                                    //Push >
+                                    argv.push_back(String::from("<"));
+                                    //Word buf becomes from the first char after <
+                                    word_buf = String::from(&word_buf[index + 1..]);
+                                } else if c == '<' && next == '<' {
+                                    //Set remainder
+                                    remainder = Some('<');
+                                } else if c == '&' && next == '&' {
+                                    //Set remainder
+                                    remainder = Some('&');
+                                } else if c == '&' && next != '&' {
+                                    let prev_part: String = String::from(&word_buf[..index]);
+                                    if prev_part.len() > 0 {
+                                        argv.push_back(prev_part); //Push word before &
+                                    }
+                                    //Push &
+                                    argv.push_back(String::from("&"));
+                                    //Word buf becomes from the first char after &
+                                    word_buf = String::from(&word_buf[index + 1..]);
+                                }
+                            }
+                            //Handle semicolon
+                            if c == ';' {
+                                let prev_part: String = String::from(&word_buf[..index]);
+                                if prev_part.len() > 0 {
+                                    argv.push_back(prev_part); //Push word before ;
+                                }
+                                //Push ;
+                                argv.push_back(String::from(";"));
+                                //Word buf becomes from the first char after ;
+                                word_buf = String::from(&word_buf[index + 1..]);
+                            }
+                        }
+                        if c == '\\' {
+                            escaped = true;
+                        } else {
+                            escaped = false;
+                        }
+                    }
+                    //Push remaining word buffer
+                    if word_buf.len() > 0 {
+                        buffer.push(word_buf);
+                    }
                 }
-                index += 1;
-                //If quote block is opened, ignore char
-                if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && prev_char != '\\' {
-                    skip_char = true;
+                index += 1; //Increment cause of whitespace
+                //If states stack is empty, push argument
+                if states.empty() {
+                    if buffer.len() > 0 {
+                        argv.push_back(buffer.join(" "));
+                        buffer.clear();
+                    }
                 }
-                //Ignore escape block opener
-                if states.is_escaped() && c == '\\' {
-                    skip_char = true;
-                }
-                if ! skip_char {
-                    word_buf.push(c);
-                }
-            }
-            //Push word buffer if big enough
-            if word_buf.len() > 0 {
-                buffer.push(word_buf);
-            }
-            index += 1; //Increment cause of whitespace
-            //If states stack is empty, push argument
-            if states.empty() {
-                argv.push(buffer.join(" "));
-                buffer.clear();
             }
         }
         Ok(argv)
+    }
+
+    /// ### is_ligature
+    /// 
+    /// Returns whether the next token is a ligature
+    fn is_ligature(&self, arg: &String) -> bool {
+        if arg == "&&" {
+            true
+        } else if arg == "||" {
+            true
+        } else if arg == "|" {
+            true
+        } else if arg == ";" {
+            true
+        } else if arg == "&" {
+            true
+        } else if arg == "&&" {
+            true
+        } else if arg == ">" {
+            true
+        } else if arg == ">>" {
+            true
+        } else if arg == "<" {
+            true
+        } else if arg == "<<" {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// ### cut_argv_to_delim
+    /// 
+    /// Cut arguments until the first delimiter is found
+    fn cut_argv_to_delim(&self, argv: &mut VecDeque<String>) {
+        let mut trunc: usize = 0;
+        for arg in argv.iter() {
+            if self.is_ligature(&arg) {
+                break;
+            } else {
+                trunc += 1;
+            }
+        }
+        for i in 0..trunc {
+            argv.pop_front();
+        } 
     }
 
     //@! Statements parsers
@@ -149,50 +324,28 @@ impl Bash {
     /// 
     /// Parse CD statement. Returns the ShellStatement parsed.
     /// Cd is already removed from input
-    fn parse_cd(&self, core: &ShellCore, state: &mut BashParserState, input: &mut String) -> Result<ShellStatement, ParserError> {
-        let mut buffer = String::new();
-        let mut chars_to_remove: usize = 0; //Amount of characters to remove from input
-        //Iterate over input
-        for (index, c) in input.chars().enumerate() {
-            if (c != ';' && c != '\n' && c != '|' && c != '&' && c != ' ') && state.previous_char == ' ' && !state.is_escaped() && buffer.len() > 0 { //If previous is whitespace and current is not ; or space and not escaped and buffer IS NOT empty, there are too many arguments
-                *input = String::from(&input[chars_to_remove..]);
-                return Err(ParserError::new(ParserErrorCode::TooManyArgs, String::from("bash: cd: too many arguments")))
-            } else if (c == ';' || c == '\n' || c == '|' || c == '&') && !state.is_escaped() { //Always break on ; or newline or other delimeters
-                let _ = state.update_state(c);
-                break;
-            } else if !state.is_escaped() && ! state.is_quoted() && (c == '"' || c == '\'') {
-                //If not escaped and not quoted, and character will start a quote, continue
-                let _ = state.update_state(c);
-                chars_to_remove += 1;
-                continue;
-            } else if !state.is_escaped() && state.is_on_top(BashParserBlock::Quoted('"')) && c == '"' {
-                //If not escaped and quoted with ", and character is ", continue
-                let _ = state.update_state(c);
-                chars_to_remove += 1;
-                continue;
-            } else if !state.is_escaped() && state.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'' {
-                //If not escaped and quoted with ', and character is ', continue
-                let _ = state.update_state(c);
-                chars_to_remove += 1;
-                continue;
-            }
-            //Update state
-            let _ = state.update_state(c);
-            //Push char to buffer
-            chars_to_remove += 1;
-            buffer.push(c);
-        }
-        //Verify if quote is still active
-        if state.is_quoted() {
-            return Err(ParserError::new(ParserErrorCode::Incomplete, String::from("")));
-        }
+    fn parse_cd(&self, core: &ShellCore, state: &mut BashParserState, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         //If dir is none, return get home or buffer, otherwise resolve path
-        let dir: PathBuf = match buffer.len() {
+        let dir: PathBuf = match argv.len() {
             0 => core.get_home(),
-            _ => PathBuf::from(buffer.as_str().trim())
+            _ => {
+                //Check if second argument is ligature
+                if argv.len() > 1 {
+                    if ! self.is_ligature(&argv[1]) {
+                        self.cut_argv_to_delim(argv);
+                        return Err(ParserError::new(ParserErrorCode::TooManyArgs, String::from("bash: cd: too many arguments")))
+                    }
+                }
+                if self.is_ligature(&argv[0]) {
+                    core.get_home()
+                } else {
+                    let first_arg: String = argv.front().unwrap().clone();
+                    PathBuf::from(first_arg.as_str().trim())
+                }
+            }
         };
-        //Remove characters from input
-        *input = String::from(&input[chars_to_remove..]);
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
         //Return Cd statement
         Ok(ShellStatement::Cd(dir))
     }
@@ -430,11 +583,48 @@ mod tests {
     fn test_bash_parser_readline() {
         let parser: Bash = Bash::new();
         assert_eq!(parser.readline(&String::from("cd /tmp/")).unwrap(), vec![String::from("cd"), String::from("/tmp/")]);
+        assert_eq!(parser.readline(&String::from("cd;")).unwrap(), vec![String::from("cd"), String::from(";")]);
         assert_eq!(parser.readline(&String::from("echo \"foo bar\"")).unwrap(), vec![String::from("echo"), String::from("foo bar")]);
         assert_eq!(parser.readline(&String::from("echo \"'foo' 'bar'\"")).unwrap(), vec![String::from("echo"), String::from("'foo' 'bar'")]);
         assert_eq!(parser.readline(&String::from("echo \"\\\"foo bar\\\"\"")).unwrap(), vec![String::from("echo"), String::from("\"foo bar\"")]);
+        //Escapes
+        assert_eq!(parser.readline(&String::from("cd \\;")).unwrap(), vec![String::from("cd"), String::from("\\;")]);
         //Try error
         assert!(parser.readline(&String::from("echo \"$(pw\"d)")).is_err());
+        //Over lines
+        assert_eq!(parser.readline(&String::from("cd /tmp/\ncd /home/")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("cd"), String::from("/home/")]);
+        //Separators (&&)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ && exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("&&"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ &&exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("&&"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/&&exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("&&"), String::from("exit")]);
+        //Separators (||)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ || exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("||"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ ||exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("||"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/||exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("||"), String::from("exit")]);
+        //Separators (|)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ | exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("|"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ |exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("|"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/|exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("|"), String::from("exit")]);
+        //Separators (;)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ ; exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(";"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ ;exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(";"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/;exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(";"), String::from("exit")]);
+        //Separators (>>)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ >> exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(">>"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ >>exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(">>"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/>>exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(">>"), String::from("exit")]);
+        //Separators (<<)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ << exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("<<"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ <<exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("<<"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/<<exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("<<"), String::from("exit")]);
+        //Separators (>)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ > exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(">"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ >exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(">"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/>exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(">"), String::from("exit")]);
+        //Separators (<)
+        assert_eq!(parser.readline(&String::from("cd /tmp/ < exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("<"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/ <exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("<"), String::from("exit")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/<exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("<"), String::from("exit")]);
     }
 
     #[test]
@@ -444,45 +634,45 @@ mod tests {
         let parser: Bash = Bash::new();
         //Parse some CD statements
         //Simple case
-        let mut input: String = String::from("/tmp");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
-        assert_eq!(input, String::from("")); //Should be empty
+        assert_eq!(input.len(), 0); //Should be empty
         //With semicolon
-        let mut input: String = String::from("/tmp;");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp;")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
-        assert_eq!(input, String::from(";")); //Should be empty
+        assert_eq!(input, vec![String::from(";")]); //Should be empty
         //With newline
-        let mut input: String = String::from("/tmp\n");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp\n")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
-        assert_eq!(input, String::from("\n")); //Should be empty
+        assert_eq!(input.len(), 0); //Should be empty
         //Too many arguments
-        let mut input: String = String::from("/tmp /home/");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp /home/")).unwrap();
         assert!(parser.parse_cd(&core, &mut states, &mut input).is_err());
-        assert_eq!(input, String::from("/home/")); //Should be empty
+        assert_eq!(input.len(), 0); //Should be empty
         //Too many arguments 2
-        let mut input: String = String::from("/tmp /home/;");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp /home/;")).unwrap();
         assert!(parser.parse_cd(&core, &mut states, &mut input).is_err());
-        assert_eq!(input, String::from("/home/;")); //Should be empty
+        assert_eq!(input, vec![String::from(";")]); //Should be empty
         //False too many arguments
-        let mut input: String = String::from("/tmp ;");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp ;")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
-        assert_eq!(input, String::from(";")); //Should be empty
+        assert_eq!(input, vec![String::from(";")]); //Should be empty
         //Too many arguments due to escape
-        let mut input: String = String::from("/tmp \\;");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp \\;")).unwrap();
         assert!(parser.parse_cd(&core, &mut states, &mut input).is_err());
-        assert_eq!(input, String::from("\\;")); //Should be empty
+        assert_eq!(input.len(), 0); //Should be empty
         //Quotes
-        let mut input: String = String::from("\"/home\"");
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"/home\"")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/")));
-        assert_eq!(input, String::from("")); //Should be empty
+        assert_eq!(input.len(), 0); //Should be empty
         //Escaped quotes
-        let mut input: String = String::from("/home/\\\"foo\\\"");
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/\\\"foo\\\"")));
-        assert_eq!(input, String::from("")); //Should be empty
+        let mut input: VecDeque<String> = parser.readline(&String::from("/home/\\\"foo\\\"")).unwrap();
+        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/\"foo\"")));
+        assert_eq!(input.len(), 0); //Should be empty
         //With and
-        let mut input: String = String::from("/tmp &&");
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp &&")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
-        assert_eq!(input, String::from("&&")); //Should be &&
+        assert_eq!(input, vec![String::from("&&")]); //Should be &&
     }
 
     #[test]
