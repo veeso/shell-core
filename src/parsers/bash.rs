@@ -403,6 +403,22 @@ impl Bash {
         Ok(ShellStatement::Cd(dir))
     }
 
+    /// ### parse_exit
+    /// 
+    /// Parse exit arguments
+    fn parse_exit(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut rc: u8 = 0;
+        if argv.len() > 0 {
+            let arg: String = argv.get(0).unwrap().to_string();
+            if ! self.is_ligature(&arg) { //If arg is not ligature, Treat arg 0
+                rc = arg.parse().unwrap_or(2);
+            }
+        }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        Ok(ShellStatement::Exit(rc))
+    }
+
 }
 
 //@! Structs
@@ -763,6 +779,29 @@ mod tests {
         assert_eq!(input.len(), 0); //Should be empty
         let mut input: VecDeque<String> = parser.readline(&String::from("-")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(core.get_prev_dir()));
+        assert_eq!(input.len(), 0); //Should be empty
+    }
+
+    #[test]
+    fn test_bash_parser_exit() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Parse some CD statements
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("0")).unwrap();
+        assert_eq!(parser.parse_exit(&mut input).unwrap(), ShellStatement::Exit(0));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("128")).unwrap();
+        assert_eq!(parser.parse_exit(&mut input).unwrap(), ShellStatement::Exit(128));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Bad case
+        let mut input: VecDeque<String> = parser.readline(&String::from("foobar")).unwrap();
+        assert_eq!(parser.parse_exit(&mut input).unwrap(), ShellStatement::Exit(2));
+        assert_eq!(input.len(), 0); //Should be empty
+        //No arg
+        let mut input: VecDeque<String> = VecDeque::new();
+        assert_eq!(parser.parse_exit(&mut input).unwrap(), ShellStatement::Exit(0));
         assert_eq!(input.len(), 0); //Should be empty
     }
 
