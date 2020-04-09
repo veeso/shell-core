@@ -127,6 +127,7 @@ pub struct ShellExpression {
 /// - Function: defines a new function (Name, expression)
 /// - If: If(Condition, Then, Else) condition
 /// - Let: perform math operation to values Let(Result, operator1, operation, operator2)
+/// - Output: send output message (Stdout, Stderr)
 /// - Popd: Pop directory from stack
 /// - Pushd: Push directory to directory stack
 /// - Read: Read command (Prompt, length, result_key)
@@ -154,6 +155,7 @@ pub enum ShellStatement {
     Function(String, ShellExpression),
     If(ShellExpression, ShellExpression, Option<ShellExpression>),
     Let(String, ShellExpression, MathOperator, ShellExpression),
+    Output(Option<String>, Option<String>),
     PopdBack,
     PopdFront,
     Pushd(PathBuf),
@@ -479,6 +481,13 @@ impl PartialEq for ShellStatement {
                     false
                 }
             },
+            ShellStatement::Output(stdout, stderr) => {
+                if let ShellStatement::Output(stdout_cmp, stderr_cmp) = other {
+                    stdout == stdout_cmp && stderr == stderr_cmp
+                } else {
+                    false
+                }
+            },
             ShellStatement::PopdBack => {
                 if let ShellStatement::PopdBack = other {
                     true
@@ -627,6 +636,10 @@ mod tests {
         assert_eq!(ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}), ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}));
         assert_ne!(ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}), ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Subtract, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}));
         assert_ne!(ShellStatement::Let(String::from("TMP"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Return(2), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //Output
+        assert_eq!(ShellStatement::Output(Some(String::from("STDOUT")), Some(String::from("STDERR"))), ShellStatement::Output(Some(String::from("STDOUT")), Some(String::from("STDERR"))));
+        assert_ne!(ShellStatement::Output(Some(String::from("STDOUT")), Some(String::from("STDERR"))), ShellStatement::Output(Some(String::from("STDOUT")), None));
+        assert_ne!(ShellStatement::Output(Some(String::from("STDOUT")), Some(String::from("STDERR"))), ShellStatement::Break);
         //Popdback
         assert_eq!(ShellStatement::PopdBack, ShellStatement::PopdBack);
         assert_ne!(ShellStatement::PopdBack, ShellStatement::Break);

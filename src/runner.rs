@@ -970,6 +970,12 @@ impl ShellRunner {
                     ShellStatement::Let(dest, operator1, operation, operator2) => {
                         rc = self.let_perform(core, dest.clone(), operator1.clone(), operation.clone(), operator2.clone());
                     },
+                    ShellStatement::Output(stdout, stderr) => {
+                        //Send output (if not both are none)
+                        if stdout.is_some() || stderr.is_some() {
+                            core.sstream.send(ShellStreamMessage::Output((stdout.clone(), stderr.clone())));
+                        }
+                    },
                     ShellStatement::PopdBack => {
                         rc = self.popd_back(core);
                     },
@@ -2202,6 +2208,13 @@ mod tests {
     }
 
     #[test]
+    fn test_runner_output() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
+
+    }
+
+    #[test]
     fn test_runner_read() {
         let mut runner: ShellRunner = ShellRunner::new();
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
@@ -2371,6 +2384,8 @@ mod tests {
                 (ShellStatement::Function(String::from("myecho"), ShellExpression { statements: vec![(ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
                 (ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), TaskRelation::Unrelated),
                 (ShellStatement::Let(String::from("RESULT"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::Output(Some(String::from("STDOUT")), None), TaskRelation::Unrelated),
+                (ShellStatement::Output(None, None), TaskRelation::Unrelated),
                 (ShellStatement::Pushd(PathBuf::from("/tmp/")), TaskRelation::Unrelated),
                 (ShellStatement::Pushd(PathBuf::from("/sbin/")), TaskRelation::Unrelated),
                 (ShellStatement::PopdBack, TaskRelation::Unrelated),
@@ -2394,16 +2409,17 @@ mod tests {
             - 2: Output: HELLO\n
             - 3: Output: file[0]
             - 4: Output: file[1]
-            - 5: dirs
+            - 5: Output
             - 6: dirs
             - 7: dirs
             - 8: dirs
-            - 9: Output: TIME
-            - 10: Time
+            - 9: dirs
+            - 10: Output: TIME
+            - 11: Time
         */
         let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
         println!("Runner::run INBOX {:?}", inbox);
-        assert_eq!(inbox.len(), 11);
+        assert_eq!(inbox.len(), 12);
         for (index, message) in inbox.iter().enumerate() {
             match index {
                 0 => {
@@ -2442,6 +2458,14 @@ mod tests {
                     }
                 },
                 5 => {
+                    if let ShellStreamMessage::Output((stdout, stderr)) = message {
+                        assert_eq!(*stdout.as_ref().unwrap(), String::from("STDOUT"));
+                        assert!(stderr.is_none());
+                    } else {
+                        panic!("Not an output");
+                    }
+                },
+                6 => {
                     if let ShellStreamMessage::Dirs(dirs) = message {
                         assert_eq!(dirs.len(), 2);
                         assert_eq!(dirs[0], PathBuf::from("/tmp/"));
@@ -2450,7 +2474,7 @@ mod tests {
                         panic!("Not a dirs");
                     }
                 },
-                6 => {
+                7 => {
                     if let ShellStreamMessage::Dirs(dirs) = message {
                         assert_eq!(dirs.len(), 3);
                         assert_eq!(dirs[0], PathBuf::from("/sbin/"));
@@ -2460,7 +2484,7 @@ mod tests {
                         panic!("Not a dirs");
                     }
                 },
-                7 => {
+                8 => {
                     if let ShellStreamMessage::Dirs(dirs) = message {
                         assert_eq!(dirs.len(), 1);
                         assert_eq!(dirs[0], PathBuf::from(core.get_home()));
@@ -2468,7 +2492,7 @@ mod tests {
                         panic!("Not a dirs");
                     }
                 },
-                8 => {
+                9 => {
                     if let ShellStreamMessage::Dirs(dirs) = message {
                         assert_eq!(dirs.len(), 1);
                         assert_eq!(dirs[0], PathBuf::from("/sbin/"));
@@ -2476,14 +2500,14 @@ mod tests {
                         panic!("Not a dirs");
                     }
                 },
-                9 => {
+                10 => {
                     if let ShellStreamMessage::Output((stdout, _))  = message {
                         assert_eq!(*stdout.as_ref().unwrap(), String::from("TIME\n"));
                     } else {
                         panic!("Not an output");
                     }
                 },
-                10 => {
+                11 => {
                     if let ShellStreamMessage::Time(t) = message {
                         assert!(t.as_millis() > 0 && t.as_millis() < 1000);
                     } else {
