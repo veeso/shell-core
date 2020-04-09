@@ -65,8 +65,6 @@ enum BashCodeBlock {
     While
 }
 
-//TODO: remember to resolve path before using them
-
 impl ParseStatement for Bash {
     fn parse(&self, core: &ShellCore, statement: &String) -> Result<ShellExpression, ParserError> {
         //Instantiate BashParserState
@@ -320,11 +318,61 @@ impl Bash {
 
     //@! Statements parsers
 
+    /// ### parse_alias
+    /// 
+    /// Parse alias arguments
+    fn parse_alias(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        /*
+            Alias has three cases
+            - alias_name => Returns the alias value
+            - alias_name=alias_value => set name to value
+            - no arguments => Returns all the aliases
+        */
+        let mut alias_name: Option<String> = None;
+        let mut alias_value: Option<String> = None;
+        if argv.len() > 0 {
+            //Get first argument
+            let arg: String = argv.get(0).unwrap().to_string();
+            if ! self.is_ligature(&arg) { //If arg is not ligature, Treat arg 0
+                let mut buff: String = String::new();
+                let mut escaped: bool = false;
+                //Iterate over argument characters
+                for c in arg.chars() {
+                    if ! escaped { //Handle separators and other stuff
+                        if c == '=' && alias_name.is_none() { //Value starts
+                            alias_name = Some(buff.clone());
+                            buff.clear();
+                            continue;
+                        }
+                    }
+                    //Handle escape
+                    if c == '\\' && ! escaped {
+                        escaped = true;
+                    } else {
+                        escaped = false;
+                    }
+                    //Push character to buff
+                    buff.push(c);
+                }
+                if alias_name.is_some() {
+                    //Set value
+                    alias_value = Some(buff.clone());
+                } else {
+                    alias_name = Some(buff.clone());
+                }
+            }
+        }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Return Alias Shell Statement
+        Ok(ShellStatement::Alias(alias_name, alias_value))
+    }
+
     /// ### parse_cd
     /// 
     /// Parse CD statement. Returns the ShellStatement parsed.
     /// Cd is already removed from input
-    fn parse_cd(&self, core: &ShellCore, state: &mut BashParserState, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+    fn parse_cd(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         //If dir is none, return get home or buffer, otherwise resolve path
         let dir: PathBuf = match argv.len() {
             0 => core.get_home(),
@@ -633,57 +681,88 @@ mod tests {
     }
 
     #[test]
+    fn test_bash_parser_alias() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple set case
+        let mut input: VecDeque<String> = parser.readline(&String::from("l=ls")).unwrap();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(Some(String::from("l")), Some(String::from("ls"))));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Simple set case with quote
+        let mut input: VecDeque<String> = parser.readline(&String::from("ll='ls -l'")).unwrap();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(Some(String::from("ll")), Some(String::from("ls -l"))));
+        assert_eq!(input.len(), 0); //Should be empty
+        let mut input: VecDeque<String> = parser.readline(&String::from("ll=\"ls -l\"")).unwrap();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(Some(String::from("ll")), Some(String::from("ls -l"))));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Set case with escapes
+        let mut input: VecDeque<String> = parser.readline(&String::from("noise='echo \"ZZZ\"'")).unwrap();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(Some(String::from("noise")), Some(String::from("echo \"ZZZ\""))));
+        assert_eq!(input.len(), 0); //Should be empty
+        let mut input: VecDeque<String> = parser.readline(&String::from("noise='echo \\'ZZZ\\''")).unwrap();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(Some(String::from("noise")), Some(String::from("echo \\'ZZZ\\'"))));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Alias getter
+        let mut input: VecDeque<String> = parser.readline(&String::from("ll")).unwrap();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(Some(String::from("ll")), None));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Alias get all
+        let mut input: VecDeque<String> = VecDeque::new();
+        assert_eq!(parser.parse_alias(&core, &mut input).unwrap(), ShellStatement::Alias(None, None));
+        assert_eq!(input.len(), 0); //Should be empty
+    }
+
+    #[test]
     fn test_bash_parser_cd() {
         let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
-        let mut states: BashParserState = BashParserState::new();
         let parser: Bash = Bash::new();
         //Parse some CD statements
         //Simple case
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
         assert_eq!(input.len(), 0); //Should be empty
         //With semicolon
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp;")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
         assert_eq!(input, vec![String::from(";")]); //Should be empty
         //With newline
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp\n")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
         assert_eq!(input.len(), 0); //Should be empty
         //Too many arguments
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp /home/")).unwrap();
-        assert!(parser.parse_cd(&core, &mut states, &mut input).is_err());
+        assert!(parser.parse_cd(&core, &mut input).is_err());
         assert_eq!(input.len(), 0); //Should be empty
         //Too many arguments 2
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp /home/;")).unwrap();
-        assert!(parser.parse_cd(&core, &mut states, &mut input).is_err());
+        assert!(parser.parse_cd(&core, &mut input).is_err());
         assert_eq!(input, vec![String::from(";")]); //Should be empty
         //False too many arguments
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp ;")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
         assert_eq!(input, vec![String::from(";")]); //Should be empty
         //Too many arguments due to escape
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp \\;")).unwrap();
-        assert!(parser.parse_cd(&core, &mut states, &mut input).is_err());
+        assert!(parser.parse_cd(&core, &mut input).is_err());
         assert_eq!(input.len(), 0); //Should be empty
         //Quotes
         let mut input: VecDeque<String> = parser.readline(&String::from("\"/home\"")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/")));
         assert_eq!(input.len(), 0); //Should be empty
         //Escaped quotes
         let mut input: VecDeque<String> = parser.readline(&String::from("/home/\\\"foo\\\"")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/\"foo\"")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/home/\"foo\"")));
         assert_eq!(input.len(), 0); //Should be empty
         //With and
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp &&")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
         assert_eq!(input, vec![String::from("&&")]); //Should be &&
         //Special cases
         let mut input: VecDeque<String> = parser.readline(&String::from("~")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(core.get_home()));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(core.get_home()));
         assert_eq!(input.len(), 0); //Should be empty
         let mut input: VecDeque<String> = parser.readline(&String::from("-")).unwrap();
-        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(core.get_prev_dir()));
+        assert_eq!(parser.parse_cd(&core, &mut input).unwrap(), ShellStatement::Cd(core.get_prev_dir()));
         assert_eq!(input.len(), 0); //Should be empty
     }
 
