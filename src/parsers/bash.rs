@@ -25,7 +25,10 @@
 // SOFTWARE.
 //
 
+extern crate getopts;
+
 use crate::{ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
+use getopts::Options;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -106,7 +109,11 @@ impl Bash {
         let mut buffer: Vec<String> = Vec::new();
         //Split by word
         let mut index: usize = 0;
-        for line in input.split("\n") { //Iter over lines
+        for (row, line) in input.split("\n").enumerate() { //Iter over lines
+            if row > 0 && line.len() > 0 {
+                //Newlines are pushed as semicolon
+                argv.push_back(String::from(";"));
+            }
             for word in line.split_whitespace() { //Iter over word in lines
                 let mut word_buf: String = String::with_capacity(word.len());
                 //Iterate over word
@@ -265,7 +272,7 @@ impl Bash {
                         buffer.clear();
                     }
                 }
-            }
+            } //End of line
         }
         Ok(argv)
     }
@@ -418,6 +425,22 @@ impl Bash {
         self.cut_argv_to_delim(argv);
         Ok(ShellStatement::Exit(rc))
     }
+
+    /*
+    /// ### parse_export
+    /// 
+    /// Parse export arguments
+    fn parse_export(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut cmdarg: Vec<String> = Vec::new();
+        for arg in argv.iter() {
+            if ! self.is_ligature(&arg) {
+                cmdarg.push(arg.to_string());
+            } else {
+                break;
+            }
+        }
+    }
+    */
 
 }
 
@@ -661,7 +684,7 @@ mod tests {
         //Try error
         assert!(parser.readline(&String::from("echo \"$(pw\"d)")).is_err());
         //Over lines
-        assert_eq!(parser.readline(&String::from("cd /tmp/\ncd /home/")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("cd"), String::from("/home/")]);
+        assert_eq!(parser.readline(&String::from("cd /tmp/\ncd /home/")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(";"), String::from("cd"), String::from("/home/")]);
         //Separators (&&)
         assert_eq!(parser.readline(&String::from("cd /tmp/ && exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("&&"), String::from("exit")]);
         assert_eq!(parser.readline(&String::from("cd /tmp/ &&exit")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from("&&"), String::from("exit")]);
