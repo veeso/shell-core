@@ -339,8 +339,13 @@ impl Bash {
                 if self.is_ligature(&argv[0]) {
                     core.get_home()
                 } else {
-                    let first_arg: String = argv.front().unwrap().clone();
-                    PathBuf::from(first_arg.as_str().trim())
+                    let first_arg: String = String::from(argv.front().unwrap().as_str().trim());
+                    //Return home/prev/path
+                    match first_arg.as_str() {
+                        "~" => core.get_home(),
+                        "-" => core.get_prev_dir(),
+                        _ => PathBuf::from(first_arg.as_str())
+                    }
                 }
             }
         };
@@ -673,6 +678,13 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("/tmp &&")).unwrap();
         assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(PathBuf::from("/tmp")));
         assert_eq!(input, vec![String::from("&&")]); //Should be &&
+        //Special cases
+        let mut input: VecDeque<String> = parser.readline(&String::from("~")).unwrap();
+        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(core.get_home()));
+        assert_eq!(input.len(), 0); //Should be empty
+        let mut input: VecDeque<String> = parser.readline(&String::from("-")).unwrap();
+        assert_eq!(parser.parse_cd(&core, &mut states, &mut input).unwrap(), ShellStatement::Cd(core.get_prev_dir()));
+        assert_eq!(input.len(), 0); //Should be empty
     }
 
     #[test]
