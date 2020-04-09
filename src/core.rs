@@ -560,6 +560,17 @@ impl ShellCore {
         }
     }
 
+    /// ### environ_getall
+    /// 
+    /// Get all variables stored in the environment
+    pub fn environ_getall(&self) -> HashMap<String, String> {
+        let mut environ: HashMap<String, String> = HashMap::new();
+        for (key, value) in env::vars() {
+            environ.insert(key.clone(), value.clone());
+        }
+        environ
+    }
+
     /// ### environ_set
     /// 
     /// Set a value in the environment
@@ -588,6 +599,17 @@ impl ShellCore {
             Some(v) => Some(v.clone()),
             None => None
         }
+    }
+
+    /// ### storage_getall
+    /// 
+    /// Get all variables stored in the storage
+    pub fn storage_getall(&self) -> HashMap<String, String> {
+        let mut storage: HashMap<String, String> = HashMap::new();
+        for (key, value) in self.storage.iter() {
+            storage.insert(key.clone(), value.clone());
+        }
+        storage
     }
 
     /// ### storage_set
@@ -927,18 +949,28 @@ mod tests {
         assert!(core.storage_get(&String::from("FOO")).is_none());
         //Set a value in the storage
         assert!(core.storage_set(String::from("FOO"), String::from("BAR")));
+        assert!(core.storage_set(String::from("PIPPO"), String::from("PLUTO")));
         //Verify value is in the storage
         assert_eq!(core.value_get(&String::from("FOO")).unwrap(), String::from("BAR"));
+        //Verify all
+        let all: HashMap<String, String> = core.storage_getall();
+        assert_eq!(all.get(&String::from("FOO")).unwrap().clone(), String::from("BAR"));
+        assert_eq!(all.get(&String::from("PIPPO")).unwrap().clone(), String::from("PLUTO"));
         //Unset value
         core.value_unset(&String::from("FOO"));
         assert!(core.value_get(&String::from("FOO")).is_none());
         //Set value in the environ
         core.environ_set(String::from("MYKEY"), String::from("305"));
+        assert!(core.environ_set(String::from("MYKEY2"), String::from("840")));
         assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("305"));
         //Set a value in the storage with name MYKEY
         assert!(core.storage_set(String::from("MYKEY"), String::from("SATURN")));
         //Now MYKEY, if retrieved should be SATURN
         assert_eq!(core.value_get(&String::from("MYKEY")).unwrap(), String::from("SATURN"));
+        //Verify all
+        let all: HashMap<String, String> = core.environ_getall();
+        assert_eq!(all.get(&String::from("MYKEY")).unwrap().clone(), String::from("305"));
+        assert_eq!(all.get(&String::from("MYKEY2")).unwrap().clone(), String::from("840"));
         //In environ the value should be still 305
         assert_eq!(core.environ_get(&String::from("MYKEY")).unwrap(), String::from("305"));
         //Test bad variable names
@@ -946,6 +978,7 @@ mod tests {
         assert!(! core.storage_set(String::from("/NAME"), String::from("FOO")));
         assert!(! core.environ_set(String::from("7YEARS"), String::from("FOO")));
         assert!(! core.environ_set(String::from("/NAME"), String::from("FOO")));
+        
         //Arguments
         assert!(core.storage_arg_set(String::from("1"), String::from("HI")));
         assert_eq!(core.storage_get(&String::from("1")).unwrap(), String::from("HI"));
