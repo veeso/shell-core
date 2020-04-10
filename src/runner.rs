@@ -903,6 +903,24 @@ impl ShellRunner {
         exitcode
     }
 
+    /// ### write_file
+    /// 
+    /// Write file with a certain content
+    fn write_file(&self, file: String, content: String, trunc: bool) -> u8 {
+        match OpenOptions::new().create(true).write(true).append(!trunc).truncate(trunc).open(file.as_str()) {
+            Ok(mut f) => {
+                if let Err(e) = write!(f, "{}", content) {
+                    1
+                } else {
+                    0
+                }
+            }
+            Err(e) => {
+                1
+            }
+        }
+    }
+
     /// ### get_expression_str_value
     /// 
     /// Return the string output and the result of an expression.
@@ -1012,6 +1030,9 @@ impl ShellRunner {
                         if let Some(exitcode) = self.while_loop(core, until.clone(), perform.clone()) {
                             rc = exitcode;
                         }
+                    },
+                    ShellStatement::WriteFile(file, content, trunc) => {
+                        rc = self.write_file(file.clone(), content.clone(), *trunc);
                     }
                 }
             }
@@ -1076,7 +1097,7 @@ impl ShellRunner {
                 //sstream.send(ShellStreamMessage::Output((None, Some(output)))); NOTE: already sent by Exec in function
             }
             Redirection::File(file, file_mode) => {
-                match OpenOptions::new().create(true).append(file_mode == FileRedirectionType::Append).truncate(file_mode == FileRedirectionType::Truncate).open(file.as_str()) {
+                match OpenOptions::new().create(true).write(true).append(file_mode == FileRedirectionType::Append).truncate(file_mode == FileRedirectionType::Truncate).open(file.as_str()) {
                     Ok(mut f) => {
                         if let Err(e) = write!(f, "{}", output) {
                             return Err(ShellError::TaskError(TaskError::new(TaskErrorCode::IoError,format!("Could not write to file {}: {}", file, e))))
@@ -2335,6 +2356,15 @@ mod tests {
     }
 
     #[test]
+    fn test_runner_write_file() {
+        let mut runner: ShellRunner = ShellRunner::new();
+        let tmpfile = create_tmpfile();
+        let tmpfile_path: String = String::from(tmpfile.path().to_str().unwrap());
+        assert_eq!(runner.write_file(tmpfile_path, String::from("OUTPUT"), true), 0);
+        assert_eq!(runner.write_file(String::from("/bin"), String::from("OUTPUT"), true), 1);
+    }
+
+    #[test]
     fn test_runner_run() {
         let mut runner: ShellRunner = ShellRunner::new();
         //Instantiate cores
@@ -2395,6 +2425,7 @@ mod tests {
                 (ShellStatement::Time(Task::new(vec![String::from("echo"), String::from("TIME")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated),
                 (ShellStatement::Unalias(String::from("ll")), TaskRelation::Unrelated),
                 (ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Break, TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::WriteFile(String::from("/tmp/rust.out"), String::from("OUTPUT"), true), TaskRelation::Unrelated),
                 (ShellStatement::Exit(1), TaskRelation::Unrelated)
             ]
         };
@@ -2685,6 +2716,10 @@ mod tests {
 
     fn create_tmp_dir() -> tempfile::TempDir {
         tempfile::TempDir::new().unwrap()
+    }
+
+    fn create_tmpfile() -> tempfile::NamedTempFile {
+        tempfile::NamedTempFile::new().unwrap()
     }
 
 }

@@ -139,6 +139,7 @@ pub struct ShellExpression {
 /// - Unalias: remove an alias
 /// - Value: simple value or key
 /// - While: While(Condition, Perform) iterator
+/// - WriteFile: FilePath, Content, truncate: write file
 #[derive(Clone, std::fmt::Debug)]
 pub enum ShellStatement {
     Alias(Option<String>, Option<String>),
@@ -166,7 +167,8 @@ pub enum ShellStatement {
     Time(Task),
     Unalias(String),
     Value(String),
-    While(ShellExpression, ShellExpression)
+    While(ShellExpression, ShellExpression),
+    WriteFile(String, String, bool)
 }
 
 /// ## ShellRunner
@@ -564,6 +566,13 @@ impl PartialEq for ShellStatement {
                 } else {
                     false
                 }
+            },
+            ShellStatement::WriteFile(file, content, trunc) => {
+                if let ShellStatement::WriteFile(file_cmp, content_cmp, trunc_cmp) = other {
+                    file == file_cmp && content == content_cmp && trunc == trunc_cmp
+                } else {
+                    false
+                }
             }
         }
     }
@@ -682,5 +691,9 @@ mod tests {
         assert_eq!(ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
         assert_ne!(ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]}));
         assert_ne!(ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}), ShellStatement::Value(String::from("5")));
+        //Write
+        assert_eq!(ShellStatement::WriteFile(String::from("/tmp/out"), String::from("hi"), true), ShellStatement::WriteFile(String::from("/tmp/out"), String::from("hi"), true));
+        assert_ne!(ShellStatement::WriteFile(String::from("/tmp/out"), String::from("hi"), true), ShellStatement::WriteFile(String::from("/tmp/out"), String::from("hi"), false));
+        assert_ne!(ShellStatement::WriteFile(String::from("/tmp/out"), String::from("hi"), true), ShellStatement::Break);
     }
 }

@@ -288,7 +288,7 @@ impl Task {
     ///
     /// Redirect a certain output to a certain file
     fn redirect_to_file(&self, file: String, file_mode: FileRedirectionType, out: String) -> Result<(), TaskError> {
-        match OpenOptions::new().create(true).append(file_mode == FileRedirectionType::Append).truncate(file_mode == FileRedirectionType::Truncate).open(file.as_str()) {
+        match OpenOptions::new().create(true).write(true).append(file_mode == FileRedirectionType::Append).truncate(file_mode == FileRedirectionType::Truncate).open(file.as_str()) {
             Ok(mut f) => {
                 if let Err(e) = write!(f, "{}", out) {
                     Err(TaskError::new(
