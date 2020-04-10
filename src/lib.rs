@@ -328,6 +328,7 @@ pub enum HistoryOptions {
     Clear,
     Del(usize),
     Print,
+    Read(String),
     Write(String, bool)
 }
 

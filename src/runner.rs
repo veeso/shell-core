@@ -36,7 +36,9 @@ use crate::tasks::{TaskError, TaskErrorCode, TaskMessageRx, TaskMessageTx};
 
 use glob::glob;
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::BufRead;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -617,11 +619,28 @@ impl ShellRunner {
                 }
                 0
             },
+            HistoryOptions::Read(file) => {
+                let file = match File::open(file) {
+                    Ok(f) => f,
+                    Err(_) => return 1
+                };
+                let lines = std::io::BufReader::new(file).lines();
+                for line in lines {
+                    if let Ok(line) = line {
+                        //Push line to history
+                        core.history_push(line.clone());
+                    } else {
+                        return 1
+                    }
+                }
+                0
+            },
             HistoryOptions::Write(file, trunc) => {
                 let mut out: String = String::new();
                 let history: VecDeque<String> = core.history_get();
                 for line in history.iter() {
                     out += line;
+                    out += "\n";
                 }
                 self.write_file(file, out, trunc)
             }
@@ -1907,9 +1926,15 @@ mod tests {
         assert_eq!(runner.history(&mut core, HistoryOptions::Print), 0);
         assert_eq!(ustream.receive().unwrap().len(), 1);
         //Write
+        core.history_push(String::from("echo cac"));
         let tmpfile = create_tmpfile();
         let tmpfile_path: String = String::from(tmpfile.path().to_str().unwrap());
-        assert_eq!(runner.history(&mut core, HistoryOptions::Write(tmpfile_path, true)), 0);
+        assert_eq!(runner.history(&mut core, HistoryOptions::Write(tmpfile_path.clone(), true)), 0);
+        core.history_clear();
+        assert_eq!(core.history.len(), 0);
+        //Reload history
+        assert_eq!(runner.history(&mut core, HistoryOptions::Read(tmpfile_path)), 0);
+        assert_eq!(core.history.len(), 2);
         /*
         assert_eq!(runner.exec_history(&mut core, 0), 0);
         //One output
