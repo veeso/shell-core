@@ -125,6 +125,7 @@ pub struct ShellExpression {
 /// - Export: export a variable into environ
 /// - For: For(String, Condition, Perform) iterator String: key name
 /// - Function: defines a new function (Name, expression)
+/// - History: perform on history
 /// - If: If(Condition, Then, Else) condition
 /// - Let: perform math operation to values Let(Result, operator1, operation, operator2)
 /// - Output: send output message (Stdout, Stderr)
@@ -155,6 +156,7 @@ pub enum ShellStatement {
     Export(String, ShellExpression),
     For(String, ShellExpression, ShellExpression),
     Function(String, ShellExpression),
+    History(HistoryOptions),
     If(ShellExpression, ShellExpression, Option<ShellExpression>),
     Let(String, ShellExpression, MathOperator, ShellExpression),
     Output(Option<String>, Option<String>),
@@ -313,6 +315,22 @@ pub trait ParseStatement {
     fn parse(&self, core: &ShellCore, statement: &String) -> Result<ShellExpression, ParserError>;
 }
 
+//@! History Options
+
+/// ### HistoryOptions
+/// 
+/// - Clear: clear history
+/// - Del: delete history from offset
+/// - Print: print history
+/// - Write: write history to file (bool is truncate)
+#[derive(Clone, PartialEq, std::fmt::Debug)]
+pub enum HistoryOptions {
+    Clear,
+    Del(usize),
+    Print,
+    Write(String, bool)
+}
+
 //@! Signals
 
 /// ## UnixSignal
@@ -467,6 +485,13 @@ impl PartialEq for ShellStatement {
             ShellStatement::Function(func, expr) => {
                 if let ShellStatement::Function(func_cmp, expr_cmp) = other {
                     func == func_cmp && expr == expr_cmp
+                } else {
+                    false
+                }
+            },
+            ShellStatement::History(opt) => {
+                if let ShellStatement::History(opt_cmp) = other {
+                    opt == opt_cmp
                 } else {
                     false
                 }
@@ -646,6 +671,10 @@ mod tests {
         assert_eq!(ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}), ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}));
         assert_ne!(ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}), ShellStatement::Function(String::from("bar"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}));
         assert_ne!(ShellStatement::Function(String::from("foo"), ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}), ShellStatement::Break);
+        //History
+        assert_eq!(ShellStatement::History(HistoryOptions::Clear), ShellStatement::History(HistoryOptions::Clear));
+        assert_ne!(ShellStatement::History(HistoryOptions::Clear), ShellStatement::History(HistoryOptions::Del(8)));
+        assert_ne!(ShellStatement::History(HistoryOptions::Clear), ShellStatement::Break);
         //If
         assert_eq!(ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None));
         assert_ne!(ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Return(3), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None));

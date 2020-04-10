@@ -28,7 +28,7 @@
 
 extern crate glob;
 
-use crate::{FileRedirectionType, MathError, MathOperator, Redirection};
+use crate::{FileRedirectionType, HistoryOptions, MathError, MathOperator, Redirection};
 use crate::{ShellCore, ShellError, ShellExpression, ShellRunner, ShellStatement};
 use crate::{ShellStream, ShellStreamMessage, UserStreamMessage};
 use crate::{TaskManager, Task, TaskRelation};
@@ -591,6 +591,43 @@ impl ShellRunner {
         }
     }
 
+    /// ### history
+    /// 
+    /// Handle history shell statement
+    fn history(&mut self, core: &mut ShellCore, opt: HistoryOptions) -> u8 {
+        match opt {
+            HistoryOptions::Clear => {
+                core.history_clear();
+                0
+            },
+            HistoryOptions::Del(index) => {
+                core.history_del(index);
+                0
+            },
+            HistoryOptions::Print => {
+                let mut out: String = String::new();
+                let history: VecDeque<String> = core.history_get();
+                for (index, line) in history.iter().enumerate() {
+                    out += format!("{} {}\n", index, line).as_str();
+                }
+                if ! core.sstream.send(ShellStreamMessage::Output((Some(out), None))) {
+                    //Set exit flag
+                    self.exit_flag = Some(255);
+                    return 255
+                }
+                0
+            },
+            HistoryOptions::Write(file, trunc) => {
+                let mut out: String = String::new();
+                let history: VecDeque<String> = core.history_get();
+                for line in history.iter() {
+                    out += line;
+                }
+                self.write_file(file, out, trunc)
+            }
+        }
+    }
+
     /// ### ifcond
     /// 
     /// Perform if statement
@@ -979,6 +1016,9 @@ impl ShellRunner {
                     },
                     ShellStatement::Function(name, expression) => {
                         rc = self.function(core, name.clone(), expression.clone());
+                    },
+                    ShellStatement::History(opt) => {
+                        rc = self.history(core, opt.clone());
                     },
                     ShellStatement::If(what, perform_if, perform_else) => {
                         if let Some(exitcode) = self.ifcond(core, what.clone(), perform_if.clone(), perform_else.clone()) {
@@ -1849,11 +1889,28 @@ mod tests {
     #[test]
     fn test_runner_history() {
         //TODO: requires readline
-        /*
         let mut runner: ShellRunner = ShellRunner::new();
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Push entry to history
-        core.history_push(String::from("echo foobar"));
+        core.history_push(String::from("echo foo"));
+        core.history_push(String::from("echo bar"));
+        //Try to clear
+        assert_eq!(runner.history(&mut core, HistoryOptions::Clear), 0);
+        assert_eq!(core.history.len(), 0);
+        //Push entry to history
+        core.history_push(String::from("echo foo"));
+        core.history_push(String::from("echo bar"));
+        //Delete
+        assert_eq!(runner.history(&mut core, HistoryOptions::Del(0)), 0);
+        assert_eq!(core.history.len(), 1);
+        //Print
+        assert_eq!(runner.history(&mut core, HistoryOptions::Print), 0);
+        assert_eq!(ustream.receive().unwrap().len(), 1);
+        //Write
+        let tmpfile = create_tmpfile();
+        let tmpfile_path: String = String::from(tmpfile.path().to_str().unwrap());
+        assert_eq!(runner.history(&mut core, HistoryOptions::Write(tmpfile_path, true)), 0);
+        /*
         assert_eq!(runner.exec_history(&mut core, 0), 0);
         //One output
         let inbox: Vec<ShellStreamMessage> = ustream.receive().unwrap();
@@ -2415,6 +2472,7 @@ mod tests {
                 (ShellStatement::Export(String::from("MYKEY"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("MYVALUE")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
                 (ShellStatement::For(String::from("FILE"), iterator, foreach_perform), TaskRelation::Unrelated),
                 (ShellStatement::Function(String::from("myecho"), ShellExpression { statements: vec![(ShellStatement::Exec(Task::new(vec![String::from("echo"), String::from("$1")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
+                (ShellStatement::History(HistoryOptions::Clear), TaskRelation::Unrelated),
                 (ShellStatement::If(ShellExpression {statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Return(0), TaskRelation::Unrelated)]}, None), TaskRelation::Unrelated),
                 (ShellStatement::Let(String::from("RESULT"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Value(String::from("2")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
                 (ShellStatement::Output(Some(String::from("STDOUT")), None), TaskRelation::Unrelated),
