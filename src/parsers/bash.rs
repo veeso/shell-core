@@ -29,6 +29,7 @@ extern crate getopts;
 
 use crate::{ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
 use getopts::Options;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -76,7 +77,7 @@ impl ParseStatement for Bash {
             Ok(argv) => argv,
             Err(err) => return Err(err)
         };
-        self.parse_lines(core, state, argv)
+        self.parse_argv(core, state, argv)
     }
 }
 
@@ -89,15 +90,28 @@ impl Bash {
         Bash {}
     }
 
-    /// ### parse_lines
+    /// ### parse_argv
     /// 
-    /// Recursive function which parse lines
-    fn parse_lines(&self, core: &ShellCore, mut state: BashParserState, mut input: VecDeque<String>) -> Result<ShellExpression, ParserError> {
+    /// Recursive function which parse arguments and evaluates them into a ShellExpression
+    fn parse_argv(&self, core: &ShellCore, mut state: BashParserState, mut input: VecDeque<String>) -> Result<ShellExpression, ParserError> {
         //Start iterating
         let mut statements: Vec<(ShellStatement, TaskRelation)> = Vec::new();
         loop {
-
+            //TODO: impl
         }
+    }
+
+    /// ### eval_expression
+    /// 
+    /// Evaluates an expression argument into a shell expression
+    fn eval_expression(&self, core: &ShellCore, expression: &String) -> Result<ShellExpression, ParserError> {
+        //Instantiate BashParserState
+        let mut state: BashParserState = BashParserState::new();
+        let mut argv: VecDeque<String> = match self.readline(expression) {
+            Ok(argv) => argv,
+            Err(err) => return Err(err)
+        };
+        self.parse_argv(core, state, argv)
     }
 
     /// ### readline
@@ -426,11 +440,10 @@ impl Bash {
         Ok(ShellStatement::Exit(rc))
     }
 
-    /*
     /// ### parse_export
     /// 
     /// Parse export arguments
-    fn parse_export(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+    fn parse_export(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         let mut cmdarg: Vec<String> = Vec::new();
         for arg in argv.iter() {
             if ! self.is_ligature(&arg) {
@@ -439,9 +452,83 @@ impl Bash {
                 break;
             }
         }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Parse cmdarg
+        let mut opts = Options::new();
+        opts.optflag("p", "print", "Print all exported variables");
+        opts.optflag("h", "help", "Display help");
+        let matches = match opts.parse(&cmdarg) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: Export invalid option: {}", e.to_string())))))
+            }
+        };
+        //Handle help
+        if matches.opt_present("h") {
+            return Ok(ShellStatement::Output(Some(opts.usage("export")), None))
+        }
+        //Handle print
+        if matches.opt_present("p") {
+            //Retrieve all values from environ
+            let environ: HashMap<String, String> = core.environ_getall();
+            let mut output: String = String::new();
+            for (key, value) in environ.iter() {
+                output.push_str(format!("declare -x {}={}\n", key, value).as_str());
+            }
+            Ok(ShellStatement::Output(Some(output), None))
+        } else {
+            //Handle extra arguments
+            let optarg: Vec<String> = matches.free.clone();
+            if optarg.len() > 0 {
+                let arg: String = optarg.get(0).unwrap().to_string();
+                let mut key: String = String::new();
+                let mut val: String = String::new();
+                let mut buff: String = String::new();
+                let mut escaped: bool = false;
+                //Iterate over argument characters
+                for c in arg.chars() {
+                    if ! escaped { //Handle separators and other stuff
+                        if c == '=' && ! key.is_empty() { //Value starts
+                            key = buff.clone();
+                            buff.clear();
+                            continue;
+                        }
+                    }
+                    //Handle escape
+                    if c == '\\' && ! escaped {
+                        escaped = true;
+                    } else {
+                        escaped = false;
+                    }
+                    //Push character to buff
+                    buff.push(c);
+                }
+                if ! key.is_empty() {
+                    //Set value
+                    val = buff.clone();
+                } else {
+                    key = buff.clone();
+                }
+                //Evaluate value as an expression
+                let val: ShellExpression = match self.eval_expression(core, &val) {
+                    Ok(expr) => expr,
+                    Err(err) => return Err(err)
+                };
+                //Return export
+                Ok(ShellStatement::Export(key, val))
+            } else { //No args
+                //Display all
+                //Retrieve all values from environ
+                let environ: HashMap<String, String> = core.environ_getall();
+                let mut output: String = String::new();
+                for (key, value) in environ.iter() {
+                    output.push_str(format!("declare -x {}={}\n", key, value).as_str());
+                }
+                Ok(ShellStatement::Output(Some(output), None))
+            }
+        }
     }
-    */
-
 }
 
 //@! Structs
@@ -672,6 +759,14 @@ mod tests {
     use crate::UserStream;
 
     #[test]
+    fn test_bash_parser_state_new() {
+        let parser_state: BashParserState = BashParserState::new();
+        assert_eq!(parser_state.states.len(), 0);
+        assert!(parser_state.empty());
+        assert_eq!(parser_state.previous_char, ' ');
+    }
+
+    #[test]
     fn test_bash_parser_readline() {
         let parser: Bash = Bash::new();
         assert_eq!(parser.readline(&String::from("cd /tmp/")).unwrap(), vec![String::from("cd"), String::from("/tmp/")]);
@@ -829,11 +924,25 @@ mod tests {
     }
 
     #[test]
-    fn test_bash_parser_state_new() {
-        let parser_state: BashParserState = BashParserState::new();
-        assert_eq!(parser_state.states.len(), 0);
-        assert!(parser_state.empty());
-        assert_eq!(parser_state.previous_char, ' ');
+    fn test_bash_parser_export() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Export two values first
+        core.environ_set(String::from("FOO"), String::from("1"));
+        core.environ_set(String::from("BAR"), String::from("2"));
+        //No args
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert!(parser.parse_export(&core, &mut input).is_ok()); //Print environment, but it's too long to be compared, it's variable too
+        assert_eq!(input.len(), 0); //Should be empty
+        //Print argument
+        let mut input: VecDeque<String> = parser.readline(&String::from("-p")).unwrap();
+        assert!(parser.parse_export(&core, &mut input).is_ok()); //Print environment, but it's too long to be compared, it's variable too
+        assert_eq!(input.len(), 0); //Should be empty
+        //Help argument
+        let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
+        assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p, --print         Print all exported variables\n    -h, --help          Display help\n")), None)); //Prints help
+        assert_eq!(input.len(), 0); //Should be empty
+        //TODO: parse_argv required for value assignation
     }
 
     #[test]
