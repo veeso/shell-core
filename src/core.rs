@@ -319,6 +319,20 @@ impl ShellCore {
         }
     }
 
+    /// ### history_clear
+    /// 
+    /// Clear history
+    pub fn history_clear(&mut self) {
+        self.history.clear();
+    }
+
+    /// ### history_del
+    /// 
+    /// Delete history from a certain index
+    pub fn history_del(&mut self, index: usize) {
+        self.history.truncate(index + 1); //Length is index + 1
+    }
+
     /// ### history_get
     /// 
     /// Returns the entire history copy
@@ -875,7 +889,8 @@ mod tests {
         assert_eq!(core.history_at(0).unwrap(), String::from("git commit -a -m 'random commit'"));
         assert_eq!(core.history_at(1).unwrap(), String::from("git status"));
         //Clear history
-        core.history.clear();
+        core.history_clear();
+        assert_eq!(core.history.len(), 0);
         //Load history
         let mut history: VecDeque<String> = VecDeque::with_capacity(3);
         history.push_back(String::from("command 1"));
@@ -886,6 +901,10 @@ mod tests {
         assert_eq!(core.history.len(), 2);
         assert_eq!(core.history_at(0).unwrap(), String::from("command 2"));
         assert_eq!(core.history_at(1).unwrap(), String::from("command 1"));
+        //Cut history
+        core.history_del(0);
+        assert_eq!(core.history.len(), 1);
+        assert_eq!(core.history_at(0).unwrap(), String::from("command 2"));
     }
     
     #[test]
