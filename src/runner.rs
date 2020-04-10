@@ -1003,6 +1003,9 @@ impl ShellRunner {
                     ShellStatement::Pushd(dir) => {
                         rc = self.pushd(core, dir.clone());
                     },
+                    ShellStatement::Rc(code) => {
+                        rc = *code;
+                    },
                     ShellStatement::Read(prompt, length, result_key) => {
                         rc = self.read(core, prompt.clone(), length.clone(), result_key.clone());
                     },
@@ -2420,6 +2423,7 @@ mod tests {
                 (ShellStatement::Pushd(PathBuf::from("/sbin/")), TaskRelation::Unrelated),
                 (ShellStatement::PopdBack, TaskRelation::Unrelated),
                 (ShellStatement::PopdFront, TaskRelation::Unrelated),
+                (ShellStatement::Rc(55), TaskRelation::Unrelated),
                 (ShellStatement::Set(String::from("YOURKEY"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("YOURVALUE")), TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
                 //ShellStatement::Source(PathBuf::from("/tmp/stuff.sh")), TODO: requires readlin, TaskRelation::Unrelated
                 (ShellStatement::Time(Task::new(vec![String::from("echo"), String::from("TIME")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated),

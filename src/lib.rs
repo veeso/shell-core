@@ -131,6 +131,7 @@ pub struct ShellExpression {
 /// - Popd: Pop directory from stack
 /// - Pushd: Push directory to directory stack
 /// - Read: Read command (Prompt, length, result_key)
+/// - Rc: set return code to value
 /// - Return: return value
 /// - Set: Set value into storage
 /// - Source: source file
@@ -160,6 +161,7 @@ pub enum ShellStatement {
     PopdBack,
     PopdFront,
     Pushd(PathBuf),
+    Rc(u8),
     Read(Option<String>, Option<usize>, Option<String>),
     Return(u8),
     Set(String, ShellExpression),
@@ -511,6 +513,13 @@ impl PartialEq for ShellStatement {
                     false
                 }
             },
+            ShellStatement::Rc(rc) => {
+                if let ShellStatement::Rc(rc_cmp) = other {
+                    rc == rc_cmp
+                } else {
+                    false
+                }
+            },
             ShellStatement::Read(prompt, length, result) => {
                 if let ShellStatement::Read(prompt_cmp, length_cmp, result_cmp) = other {
                     prompt == prompt_cmp && length == length_cmp && result == result_cmp
@@ -659,6 +668,10 @@ mod tests {
         assert_eq!(ShellStatement::Pushd(PathBuf::from("/tmp/")), ShellStatement::Pushd(PathBuf::from("/tmp/")));
         assert_ne!(ShellStatement::Pushd(PathBuf::from("/tmp/")), ShellStatement::Pushd(PathBuf::from("/home/")));
         assert_ne!(ShellStatement::Pushd(PathBuf::from("/tmp/")), ShellStatement::Break);
+        //Rc
+        assert_eq!(ShellStatement::Rc(0), ShellStatement::Rc(0));
+        assert_ne!(ShellStatement::Rc(0), ShellStatement::Rc(2));
+        assert_ne!(ShellStatement::Rc(0), ShellStatement::Break);
         //Read
         assert_eq!(ShellStatement::Read(None, None, None), ShellStatement::Read(None, None, None));
         assert_ne!(ShellStatement::Read(None, None, None), ShellStatement::Read(None, Some(32), None));
