@@ -428,7 +428,106 @@ impl Bash {
         Ok(ShellStatement::Cd(dir))
     }
 
-    //TODO: declare
+    /// ### parse_declare
+    /// 
+    /// Parse declare commands arguments
+    fn parse_declare(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut cmdarg: Vec<String> = Vec::new();
+        for arg in argv.iter() {
+            if ! self.is_ligature(&arg) {
+                cmdarg.push(arg.to_string());
+            } else {
+                break;
+            }
+        }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Parse cmdarg
+        let mut opts = Options::new();
+        opts.optflag("i", "", "to make NAMEs have the `integer' attribute");
+        opts.optflag("l", "", "to convert the value of each NAME to lower case on assignment");
+        opts.optflag("u", "", "to convert the value of each NAME to upper case on assignment");
+        opts.optflag("x", "", "to make NAMEs export");
+        opts.optflag("p", "", "display the attributes and value of each NAME");
+        opts.optflag("h", "", "display help");
+        let matches = match opts.parse(&cmdarg) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: declare: invalid option: {}", e.to_string())))))
+            }
+        };
+        //Handle help
+        if matches.opt_present("h") {
+            return Ok(ShellStatement::Output(Some(opts.usage("declare")), None))
+        }
+        //Handle print
+        if matches.free.len() == 0 || matches.opt_present("p") {
+            //Retrieve all values from environ and storage
+            let environ: HashMap<String, String> = core.environ_getall();
+            let storage: HashMap<String, String> = core.storage_getall();
+            let mut output: String = String::new();
+            for (key, value) in environ.iter() {
+                output.push_str(format!("declare -x {}=\"{}\"\n", key, value).as_str());
+            }
+            for (key, value) in storage.iter() {
+                output.push_str(format!("declare {}=\"{}\"\n", key, value).as_str());
+            }
+            Ok(ShellStatement::Output(Some(output), None))
+        } else {
+            //Get flags
+            let to_integer: bool = matches.opt_present("i");
+            let lowercase: bool = matches.opt_present("l");
+            let uppercase: bool = matches.opt_present("u");
+            let export: bool = matches.opt_present("x");
+            //Handle assignment
+            let arg: String = matches.free.get(0).unwrap().to_string();
+            let mut key: String = String::new();
+            let mut val: String = String::new();
+            let mut buff: String = String::new();
+            let mut escaped: bool = false;
+            //Iterate over argument characters
+            for c in arg.chars() {
+                if ! escaped { //Handle separators and other stuff
+                    if c == '=' && key.is_empty() { //Value starts
+                        key = buff.clone();
+                        buff.clear();
+                        continue;
+                    }
+                }
+                //Handle escape
+                if c == '\\' && ! escaped {
+                    escaped = true;
+                } else {
+                    escaped = false;
+                }
+                //Push character to buff
+                buff.push(c);
+            }
+            if ! key.is_empty() {
+                //Set value
+                val = buff.clone();
+            } else {
+                key = buff.clone();
+            }
+            //FIXME: declare does not support eval_expression
+            //Treat value
+            if to_integer {
+                val = val.parse::<isize>().unwrap_or(0).to_string();
+            } else if uppercase {
+                val = val.to_uppercase();
+            } else if lowercase {
+                val = val.to_lowercase();
+            }
+            //Convert value to a Shell Expression
+            let val: ShellExpression = ShellExpression { statements: vec![(ShellStatement::Value(val), TaskRelation::Unrelated)] };
+            //Return export or set
+            if export {
+                Ok(ShellStatement::Export(key, val))
+            } else {
+                Ok(ShellStatement::Set(key, val))
+            }
+        }
+    }
     
     /// ### parse_dirs
     /// 
@@ -482,8 +581,9 @@ impl Bash {
         self.cut_argv_to_delim(argv);
         //Parse cmdarg
         let mut opts = Options::new();
-        opts.optflag("p", "print", "Print all exported variables");
-        opts.optflag("h", "help", "Display help");
+        opts.optflag("p", "", "Print all exported variables");
+        //TODO: -n (unset) option
+        opts.optflag("h", "", "Display help");
         let matches = match opts.parse(&cmdarg) {
             Ok(m) => m,
             Err(e) => {
@@ -495,64 +595,52 @@ impl Bash {
             return Ok(ShellStatement::Output(Some(opts.usage("export")), None))
         }
         //Handle print
-        if matches.opt_present("p") {
+        if matches.free.len() == 0 || matches.opt_present("p") {
             //Retrieve all values from environ
             let environ: HashMap<String, String> = core.environ_getall();
             let mut output: String = String::new();
             for (key, value) in environ.iter() {
-                output.push_str(format!("declare -x {}={}\n", key, value).as_str());
+                output.push_str(format!("declare -x {}=\"{}\"\n", key, value).as_str());
             }
             Ok(ShellStatement::Output(Some(output), None))
         } else {
             //Handle extra arguments
-            let optarg: Vec<String> = matches.free.clone();
-            if optarg.len() > 0 {
-                let arg: String = optarg.get(0).unwrap().to_string();
-                let mut key: String = String::new();
-                let mut val: String = String::new();
-                let mut buff: String = String::new();
-                let mut escaped: bool = false;
-                //Iterate over argument characters
-                for c in arg.chars() {
-                    if ! escaped { //Handle separators and other stuff
-                        if c == '=' && ! key.is_empty() { //Value starts
-                            key = buff.clone();
-                            buff.clear();
-                            continue;
-                        }
+            let arg: String = matches.free.get(0).unwrap().to_string();
+            let mut key: String = String::new();
+            let mut val: String = String::new();
+            let mut buff: String = String::new();
+            let mut escaped: bool = false;
+            //Iterate over argument characters
+            for c in arg.chars() {
+                if ! escaped { //Handle separators and other stuff
+                    if c == '=' && key.is_empty() { //Value starts
+                        key = buff.clone();
+                        buff.clear();
+                        continue;
                     }
-                    //Handle escape
-                    if c == '\\' && ! escaped {
-                        escaped = true;
-                    } else {
-                        escaped = false;
-                    }
-                    //Push character to buff
-                    buff.push(c);
                 }
-                if ! key.is_empty() {
-                    //Set value
-                    val = buff.clone();
+                //Handle escape
+                if c == '\\' && ! escaped {
+                    escaped = true;
                 } else {
-                    key = buff.clone();
+                    escaped = false;
                 }
-                //Evaluate value as an expression
-                let val: ShellExpression = match self.eval_expression(core, &val) {
-                    Ok(expr) => expr,
-                    Err(err) => return Err(err)
-                };
-                //Return export
-                Ok(ShellStatement::Export(key, val))
-            } else { //No args
-                //Display all
-                //Retrieve all values from environ
-                let environ: HashMap<String, String> = core.environ_getall();
-                let mut output: String = String::new();
-                for (key, value) in environ.iter() {
-                    output.push_str(format!("declare -x {}=\"{}\"\n", key, value).as_str());
-                }
-                Ok(ShellStatement::Output(Some(output), None))
+                //Push character to buff
+                buff.push(c);
             }
+            if ! key.is_empty() {
+                //Set value
+                val = buff.clone();
+            } else {
+                key = buff.clone();
+            }
+            //Evaluate value as an expression
+            let val: ShellExpression = match self.eval_expression(core, &val) {
+                Ok(expr) => expr,
+                Err(err) => return Err(err)
+            };
+            //Return export
+            Ok(ShellStatement::Export(key, val))
         }
     }
 
@@ -639,7 +727,7 @@ impl Bash {
                 //Iterate over argument characters
                 for c in arg.chars() {
                     if ! escaped { //Handle separators and other stuff
-                        if c == '=' && ! key.is_empty() { //Value starts
+                        if c == '=' && key.is_empty() { //Value starts
                             key = buff.clone();
                             buff.clear();
                             continue;
@@ -806,6 +894,7 @@ impl Bash {
 
     //TODO: time
     //TODO: until/while
+    //TODO: unset
     
 }
 
@@ -1179,6 +1268,42 @@ mod tests {
     }
 
     #[test]
+    fn test_bash_parser_declare() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=FOO")).unwrap();
+        assert_eq!(parser.parse_declare(&core, &mut input).unwrap(), ShellStatement::Set(String::from("A"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("FOO")), TaskRelation::Unrelated)]}));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Simple case with ligature
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=5 &&")).unwrap();
+        assert_eq!(parser.parse_declare(&core, &mut input).unwrap(), ShellStatement::Set(String::from("A"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}));
+        assert_eq!(input.len(), 1); //Should be empty
+        //Export
+        let mut input: VecDeque<String> = parser.readline(&String::from("-x A=5")).unwrap();
+        assert_eq!(parser.parse_declare(&core, &mut input).unwrap(), ShellStatement::Export(String::from("A"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Integer
+        let mut input: VecDeque<String> = parser.readline(&String::from("-i A=FOO")).unwrap();
+        assert_eq!(parser.parse_declare(&core, &mut input).unwrap(), ShellStatement::Set(String::from("A"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("0")), TaskRelation::Unrelated)]}));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Lowercase
+        let mut input: VecDeque<String> = parser.readline(&String::from("-l A=FOO")).unwrap();
+        assert_eq!(parser.parse_declare(&core, &mut input).unwrap(), ShellStatement::Set(String::from("A"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("foo")), TaskRelation::Unrelated)]}));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Print
+        //Set some values first
+        core.storage_set(String::from("FOO"), String::from("30"));
+        let mut input: VecDeque<String> = parser.readline(&String::from("-p")).unwrap();
+        assert!(parser.parse_declare(&core, &mut input).is_ok());
+        assert_eq!(input.len(), 0); //Should be empty
+        //Help
+        let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
+        assert_eq!(parser.parse_declare(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("declare\n\nOptions:\n    -i                  to make NAMEs have the `integer\' attribute\n    -l                  to convert the value of each NAME to lower case on\n                        assignment\n    -u                  to convert the value of each NAME to upper case on\n                        assignment\n    -x                  to make NAMEs export\n    -p                  display the attributes and value of each NAME\n    -h                  display help\n")), None));
+        assert_eq!(input.len(), 0); //Should be empty
+    }
+
+    #[test]
     fn test_bash_parser_dirs() {
         let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
         let parser: Bash = Bash::new();
@@ -1235,7 +1360,7 @@ mod tests {
         assert_eq!(input.len(), 0); //Should be empty
         //Help argument
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
-        assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p, --print         Print all exported variables\n    -h, --help          Display help\n")), None)); //Prints help
+        assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p                  Print all exported variables\n    -h                  Display help\n")), None)); //Prints help
         assert_eq!(input.len(), 0); //Should be empty
         //TODO: parse_argv required for value assignation
     }
@@ -1284,7 +1409,8 @@ mod tests {
         core.storage_set(String::from("BAR"), String::from("2"));
         //No args
         let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
-        assert_eq!(parser.parse_local(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("BAR=\"2\"\nFOO=\"1\"\n")), None));
+        let res = parser.parse_local(&core, &mut input).unwrap();
+        assert!(res == ShellStatement::Output(Some(String::from("BAR=\"2\"\nFOO=\"1\"\n")), None) || res == ShellStatement::Output(Some(String::from("FOO=\"1\"\nBAR=\"2\"\n")), None));
         assert_eq!(input.len(), 0); //Should be empty
         //TODO: eval is required
     }
