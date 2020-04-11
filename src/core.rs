@@ -184,10 +184,10 @@ impl ShellCore {
     /// ### pushd
     /// 
     /// Push directory to back of directory queue
-    /// If the capacity (255) is higher than length +1, the front directory will be popped first
+    /// If the capacity (255) is higher than length +1, the last directory will be popped first
     pub(crate) fn pushd(&mut self, dir: PathBuf) {
         if self.dirs.capacity() == self.dirs.len() + 1 {
-            self.popd_front();
+            self.popd_back();
         }
         self.dirs.push_front(dir);
     }

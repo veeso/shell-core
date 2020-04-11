@@ -627,7 +627,15 @@ impl Bash {
     //TODO: let
     //TODO: local
     //TODO: logout
-    //TODO: popd
+    
+    /// ### parse_popd
+    /// 
+    /// Parse popd command arguments
+    fn parse_popd(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        Ok(ShellStatement::PopdFront)
+    }
 
     /// ### parse_pushd
     /// 
@@ -1207,6 +1215,20 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
+    }
+
+    #[test]
+    fn test_bash_parser_popd() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("aaaa")).unwrap();
+        assert_eq!(parser.parse_popd(&mut input).unwrap(), ShellStatement::PopdFront);
+        assert_eq!(input.len(), 0); //Should be empty
+        //Home case
+        let mut input: VecDeque<String> = parser.readline(&String::from("&&")).unwrap();
+        assert_eq!(parser.parse_popd(&mut input).unwrap(), ShellStatement::PopdFront);
+        assert_eq!(input.len(), 1); //Should have ligature
     }
 
     #[test]
