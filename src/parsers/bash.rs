@@ -628,7 +628,31 @@ impl Bash {
     //TODO: local
     //TODO: logout
     //TODO: popd
-    //TODO: pushd
+
+    /// ### parse_pushd
+    /// 
+    /// Parse pushd command arguments
+    fn parse_pushd(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let dir: Option<PathBuf> = match argv.get(0) {
+            None => {
+                None
+            },
+            Some(arg) => {
+                if ! self.is_ligature(arg) {
+                    Some(core.resolve_path(arg.to_string()))
+                } else {
+                    None
+                }
+            }
+        };
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Return
+        match dir {
+            None => Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: pushd: no directory to push"))),
+            Some(d) => Ok(ShellStatement::Pushd(d))
+        }
+    }
 
     /// ### parse_read
     /// 
@@ -1183,6 +1207,27 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
+    }
+
+    #[test]
+    fn test_bash_parser_pushd() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp/")).unwrap();
+        assert_eq!(parser.parse_pushd(&core, &mut input).unwrap(), ShellStatement::Pushd(PathBuf::from("/tmp/")));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Home case
+        let mut input: VecDeque<String> = parser.readline(&String::from("~")).unwrap();
+        assert_eq!(parser.parse_pushd(&core, &mut input).unwrap(), ShellStatement::Pushd(core.get_home()));
+        assert_eq!(input.len(), 0); //Should be empty
+        //No args
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert!(parser.parse_pushd(&core, &mut input).is_err());
+        assert_eq!(input.len(), 0); //Should be empty
+        let mut input: VecDeque<String> = parser.readline(&String::from(";")).unwrap();
+        assert!(parser.parse_pushd(&core, &mut input).is_err());
+        assert_eq!(input.len(), 1); //Should have ligature
     }
 
     #[test]
