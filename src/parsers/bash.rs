@@ -27,7 +27,7 @@
 
 extern crate getopts;
 
-use crate::{ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
+use crate::{HistoryOptions, ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
 use getopts::Options;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -98,6 +98,7 @@ impl Bash {
         let mut statements: Vec<(ShellStatement, TaskRelation)> = Vec::new();
         loop {
             //TODO: impl
+            //TODO: args becomes with '!', '$', '`'
         }
     }
 
@@ -389,6 +390,9 @@ impl Bash {
         Ok(ShellStatement::Alias(alias_name, alias_value))
     }
 
+    //TODO: case
+    //TODO: command
+
     /// ### parse_cd
     /// 
     /// Parse CD statement. Returns the ShellStatement parsed.
@@ -423,6 +427,10 @@ impl Bash {
         //Return Cd statement
         Ok(ShellStatement::Cd(dir))
     }
+
+    //TODO: declare
+    //TODO: dirs
+    //TODO: exec
 
     /// ### parse_exit
     /// 
@@ -529,6 +537,86 @@ impl Bash {
             }
         }
     }
+
+    //TODO: for
+    //TODO: function
+    //TODO: getopts
+    //TODO: help
+    
+    /// ### parse_history
+    /// 
+    /// Parse history command arguments
+    fn parse_history(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut cmdarg: Vec<String> = Vec::new();
+        for arg in argv.iter() {
+            if ! self.is_ligature(&arg) {
+                cmdarg.push(arg.to_string());
+            } else {
+                break;
+            }
+        }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Parse cmdarg
+        let mut opts = Options::new();
+        opts.optopt("a", "", "Append the new history lines to the history file", "<file>");
+        opts.optflag("c", "", "Clear the history list. This may be combined with the other options to replace the history list completely.");
+        opts.optopt("d", "", "Delete the history entry at position offset", "<offset>");
+        opts.optopt("r", "", "Read the history file and append its contents to the history list.", "<file>");
+        opts.optopt("w", "", "Write out the current history list to the history file.", "<file>");
+        opts.optflag("h", "help", "Display help");
+        let matches = match opts.parse(&cmdarg) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: History invalid option: {}", e.to_string())))))
+            }
+        };
+        //Handle help
+        if matches.opt_present("h") {
+            Ok(ShellStatement::Output(Some(opts.usage("history")), None))
+        } else if let Some(file) = matches.opt_str("a") {
+            //Resolve path
+            let file: String = core.resolve_path(file.clone()).into_os_string().into_string().unwrap_or(file);
+            //Append history to file
+            Ok(ShellStatement::History(HistoryOptions::Write(file, false)))
+        } else if matches.opt_present("c") {
+            //Clear history
+            Ok(ShellStatement::History(HistoryOptions::Clear))
+        } else if let Some(index) = matches.opt_str("d") {
+            //Split history and return rc
+            if let Ok(index) = index.parse::<usize>() {
+                Ok(ShellStatement::History(HistoryOptions::Del(index)))
+            } else {
+                Err(ParserError::new(ParserErrorCode::TooManyArgs, String::from("history del index must be a number")))
+            }
+        } else if let Some(file) = matches.opt_str("r") {
+            //Resolve path
+            let file: String = core.resolve_path(file.clone()).into_os_string().into_string().unwrap_or(file);
+            //Read history
+            Ok(ShellStatement::History(HistoryOptions::Read(file)))
+        } else if let Some(file) = matches.opt_str("w") {
+            //Resolve path
+            let file: String = core.resolve_path(file.clone()).into_os_string().into_string().unwrap_or(file);
+            //Write file (truncate)
+            Ok(ShellStatement::History(HistoryOptions::Write(file, true)))
+        } else {
+            //Print history
+            Ok(ShellStatement::History(HistoryOptions::Print))
+        }
+    }
+    //TODO: if
+    //TODO: let
+    //TODO: local
+    //TODO: logout
+    //TODO: popd
+    //TODO: pushd
+    //TODO: read
+    //TODO: return
+    //TODO: set
+    //TODO: source
+    //TODO: time
+    //TODO: until/while
+    
 }
 
 //@! Structs
@@ -943,6 +1031,42 @@ mod tests {
         assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p, --print         Print all exported variables\n    -h, --help          Display help\n")), None)); //Prints help
         assert_eq!(input.len(), 0); //Should be empty
         //TODO: parse_argv required for value assignation
+    }
+
+    #[test]
+    fn test_bash_parser_history() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //No args
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::History(HistoryOptions::Print));
+        assert_eq!(input.len(), 0);
+        //Append history
+        let history: String = format!("{}/.bash_history", core.get_home().as_path().display());
+        let mut input: VecDeque<String> = parser.readline(&String::from("-a ~/.bash_history")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::History(HistoryOptions::Write(history.clone(), false)));
+        assert_eq!(input.len(), 0);
+        //Clear history
+        let mut input: VecDeque<String> = parser.readline(&String::from("-c")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::History(HistoryOptions::Clear));
+        assert_eq!(input.len(), 0);
+        //Delete history index
+        let mut input: VecDeque<String> = parser.readline(&String::from("-d 42")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::History(HistoryOptions::Del(42)));
+        assert_eq!(input.len(), 0);
+        //Read the history
+        let mut input: VecDeque<String> = parser.readline(&String::from("-r ~/.bash_history")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::History(HistoryOptions::Read(history.clone())));
+        assert_eq!(input.len(), 0);
+        //Write history
+        let mut input: VecDeque<String> = parser.readline(&String::from("-w ~/.bash_history")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::History(HistoryOptions::Write(history.clone(), true)));
+        assert_eq!(input.len(), 0);
+        //Help
+        let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
+        assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
+        assert_eq!(input.len(), 0);
+
     }
 
     #[test]
