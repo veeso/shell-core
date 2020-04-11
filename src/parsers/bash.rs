@@ -355,42 +355,39 @@ impl Bash {
             - alias_name=alias_value => set name to value
             - no arguments => Returns all the aliases
         */
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         let mut alias_name: Option<String> = None;
         let mut alias_value: Option<String> = None;
-        if argv.len() > 0 {
-            //Get first argument
-            let arg: String = argv.get(0).unwrap().to_string();
-            if ! self.is_ligature(&arg) { //If arg is not ligature, Treat arg 0
-                let mut buff: String = String::new();
-                let mut escaped: bool = false;
-                //Iterate over argument characters
-                for c in arg.chars() {
-                    if ! escaped { //Handle separators and other stuff
-                        if c == '=' && alias_name.is_none() { //Value starts
-                            alias_name = Some(buff.clone());
-                            buff.clear();
-                            continue;
-                        }
+        //Get first argument if possible
+        if let Some(arg) = argv.get(0) {
+            let mut buff: String = String::new();
+            let mut escaped: bool = false;
+            //Iterate over argument characters
+            for c in arg.chars() {
+                if ! escaped { //Handle separators and other stuff
+                    if c == '=' && alias_name.is_none() { //Value starts
+                        alias_name = Some(buff.clone());
+                        buff.clear();
+                        continue;
                     }
-                    //Handle escape
-                    if c == '\\' && ! escaped {
-                        escaped = true;
-                    } else {
-                        escaped = false;
-                    }
-                    //Push character to buff
-                    buff.push(c);
                 }
-                if alias_name.is_some() {
-                    //Set value
-                    alias_value = Some(buff.clone());
+                //Handle escape
+                if c == '\\' && ! escaped {
+                    escaped = true;
                 } else {
-                    alias_name = Some(buff.clone());
+                    escaped = false;
                 }
+                //Push character to buff
+                buff.push(c);
+            }
+            if alias_name.is_some() {
+                //Set value
+                alias_value = Some(buff.clone());
+            } else {
+                alias_name = Some(buff.clone());
             }
         }
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
         //Return Alias Shell Statement
         Ok(ShellStatement::Alias(alias_name, alias_value))
     }
@@ -403,32 +400,20 @@ impl Bash {
     /// Parse CD statement. Returns the ShellStatement parsed.
     /// Cd is already removed from input
     fn parse_cd(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         //If dir is none, return get home or buffer, otherwise resolve path
         let dir: PathBuf = match argv.len() {
             0 => core.get_home(),
+            1 => {
+                //Returns the resolved first argument
+                core.resolve_path(String::from(argv.first().unwrap().as_str().trim()))
+            },
             _ => {
                 //Check if second argument is ligature
-                if argv.len() > 1 {
-                    if ! self.is_ligature(&argv[1]) {
-                        self.cut_argv_to_delim(argv);
-                        return Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: cd: too many arguments")))
-                    }
-                }
-                if self.is_ligature(&argv[0]) {
-                    core.get_home()
-                } else {
-                    let first_arg: String = String::from(argv.front().unwrap().as_str().trim());
-                    //Return home/prev/path
-                    match first_arg.as_str() {
-                        "~" => core.get_home(),
-                        "-" => core.get_prev_dir(),
-                        _ => PathBuf::from(first_arg.as_str())
-                    }
-                }
+                return Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: cd: too many arguments")))
             }
         };
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
         //Return Cd statement
         Ok(ShellStatement::Cd(dir))
     }
@@ -437,16 +422,8 @@ impl Bash {
     /// 
     /// Parse declare commands arguments
     fn parse_declare(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
-        let mut cmdarg: Vec<String> = Vec::new();
-        for arg in argv.iter() {
-            if ! self.is_ligature(&arg) {
-                cmdarg.push(arg.to_string());
-            } else {
-                break;
-            }
-        }
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         //Parse cmdarg
         let mut opts = Options::new();
         opts.optflag("i", "", "to make NAMEs have the `integer' attribute");
@@ -455,7 +432,7 @@ impl Bash {
         opts.optflag("x", "", "to make NAMEs export");
         opts.optflag("p", "", "display the attributes and value of each NAME");
         opts.optflag("h", "", "display help");
-        let matches = match opts.parse(&cmdarg) {
+        let matches = match opts.parse(&argv) {
             Ok(m) => m,
             Err(e) => {
                 return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: declare: invalid option: {}", e.to_string())))))
@@ -538,17 +515,12 @@ impl Bash {
     /// 
     /// Parse dirs arguments
     fn parse_dirs(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         //Check args
-        if argv.len() > 0 {
-            let arg: String = argv.get(0).unwrap().clone();
-            if ! self.is_ligature(&arg) {
-                //Too many arguments
-                self.cut_argv_to_delim(argv);
-                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: dirs: {}: invalid option", arg)))
-            }
+        if let Some(arg) = argv.get(0) {
+            return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: dirs: {}: invalid option", arg)))
         }
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
         Ok(ShellStatement::Dirs)
     }
 
@@ -574,22 +546,14 @@ impl Bash {
     /// 
     /// Parse export arguments
     fn parse_export(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
-        let mut cmdarg: Vec<String> = Vec::new();
-        for arg in argv.iter() {
-            if ! self.is_ligature(&arg) {
-                cmdarg.push(arg.to_string());
-            } else {
-                break;
-            }
-        }
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         //Parse cmdarg
         let mut opts = Options::new();
         opts.optflag("p", "", "Print all exported variables");
         //TODO: -n (unset) option
         opts.optflag("h", "", "Display help");
-        let matches = match opts.parse(&cmdarg) {
+        let matches = match opts.parse(&argv) {
             Ok(m) => m,
             Err(e) => {
                 return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: export: invalid option: {}", e.to_string())))))
@@ -658,16 +622,8 @@ impl Bash {
     /// 
     /// Parse history command arguments
     fn parse_history(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
-        let mut cmdarg: Vec<String> = Vec::new();
-        for arg in argv.iter() {
-            if ! self.is_ligature(&arg) {
-                cmdarg.push(arg.to_string());
-            } else {
-                break;
-            }
-        }
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         //Parse cmdarg
         let mut opts = Options::new();
         opts.optopt("a", "", "Append the new history lines to the history file", "<file>");
@@ -676,7 +632,7 @@ impl Bash {
         opts.optopt("r", "", "Read the history file and append its contents to the history list.", "<file>");
         opts.optopt("w", "", "Write out the current history list to the history file.", "<file>");
         opts.optflag("h", "help", "Display help");
-        let matches = match opts.parse(&cmdarg) {
+        let matches = match opts.parse(&argv) {
             Ok(m) => m,
             Err(e) => {
                 return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: history: invalid option: {}", e.to_string())))))
@@ -723,6 +679,8 @@ impl Bash {
     /// 
     /// Parse local command arguments
     fn parse_local(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         let mut statement: ShellStatement = match argv.get(0) { //If arg is set
             Some(arg) => {
                 let mut key: String = String::new();
@@ -771,8 +729,6 @@ impl Bash {
                 ShellStatement::Output(Some(output), None)
             }
         };
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
         //Return statement
         Ok(statement)
     }
@@ -784,7 +740,7 @@ impl Bash {
     /// Parse popd command arguments
     fn parse_popd(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         //Remove useless arguments
-        self.cut_argv_to_delim(argv);
+        let _ = self.cut_argv_to_delim(argv);
         Ok(ShellStatement::PopdFront)
     }
 
@@ -792,20 +748,16 @@ impl Bash {
     /// 
     /// Parse pushd command arguments
     fn parse_pushd(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         let dir: Option<PathBuf> = match argv.get(0) {
             None => {
                 None
             },
             Some(arg) => {
-                if ! self.is_ligature(arg) {
-                    Some(core.resolve_path(arg.to_string()))
-                } else {
-                    None
-                }
+                Some(core.resolve_path(arg.to_string()))
             }
         };
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
         //Return
         match dir {
             None => Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: pushd: no directory to push"))),
@@ -817,22 +769,14 @@ impl Bash {
     /// 
     /// Parse read commands arguments
     fn parse_read(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
-        let mut cmdarg: Vec<String> = Vec::new();
-        for arg in argv.iter() {
-            if ! self.is_ligature(&arg) {
-                cmdarg.push(arg.to_string());
-            } else {
-                break;
-            }
-        }
-        //Remove useless arguments
-        self.cut_argv_to_delim(argv);
-        //Parse cmdarg
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
+        //Parse argv
         let mut opts = Options::new();
         opts.optopt("n", "", "Return only after reading exactly NCHARS characters, unless EOF is encountered or read times out, ignoring any delimiter", "nchars");
         opts.optopt("p", "", "output the string PROMPT without a trailing newline before attempting to read", "prompt");
         opts.optflag("h", "help", "Display help");
-        let matches = match opts.parse(&cmdarg) {
+        let matches = match opts.parse(&argv) {
             Ok(m) => m,
             Err(e) => {
                 return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: Read: invalid option: {}", e.to_string())))))
@@ -867,14 +811,11 @@ impl Bash {
     /// Parse return arguments
     fn parse_return(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         let mut exitcode: Option<u8> = None;
-        if argv.len() > 0 {
-            let arg: &String = argv.get(0).unwrap();
-            if ! self.is_ligature(arg) {
-                exitcode = Some(arg.parse::<u8>().unwrap_or(2));
-            }
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
+        if let Some(arg) = argv.get(0) {
+            exitcode = Some(arg.parse::<u8>().unwrap_or(2));
         }
-        //Remove arguments
-        self.cut_argv_to_delim(argv);
         Ok(ShellStatement::Return(exitcode.unwrap_or(0)))
     }
 
@@ -885,15 +826,13 @@ impl Bash {
     /// Parse source arguments
     fn parse_source(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         let mut res: Result<ShellStatement, ParserError> = Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: source: file name is required as argument")));
+        //Get arguments for this command (ligaturs are removed)
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
         if let Some(arg) = argv.get(0) {
-            if ! self.is_ligature(arg) {
-                //Resolve path
-                let file: PathBuf = core.resolve_path(arg.clone());
-                res = Ok(ShellStatement::Source(file));
-            }
+            //Resolve path
+            let file: PathBuf = core.resolve_path(arg.clone());
+            res = Ok(ShellStatement::Source(file));
         }
-        //Remove arguments
-        self.cut_argv_to_delim(argv);
         res
     }
 
@@ -904,21 +843,19 @@ impl Bash {
     /// 
     /// Parse unset command arguments
     fn parse_unset(&self, argv: &mut VecDeque<String>) -> Result<Vec<ShellStatement>, ParserError> {
-        let mut res: Result<Vec<ShellStatement>, ParserError> = Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: unset: variable name is required as argument")));
         //Get arguments for this command
         let argv: Vec<String> = self.cut_argv_to_delim(argv);
-        //For each argument, remove it from storage
-        if argv.len() > 0 {
-            //Instantiate statements
-            let mut statements: Vec<ShellStatement> = Vec::with_capacity(argv.len());
-            //Iterate over variables
-            for var in argv.iter() {
-                statements.push(ShellStatement::Unset(var.clone()));
-            }
-            //Set result
-            res = Ok(statements);
+        //Instantiate statements
+        let mut statements: Vec<ShellStatement> = Vec::with_capacity(argv.len());
+        //Iterate over variables
+        for var in argv.iter() {
+            statements.push(ShellStatement::Unset(var.clone()));
         }
-        res
+        //Set result
+        match statements.is_empty() {
+            true => Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: unset: variable name is required as argument"))),
+            false => Ok(statements)
+        }
     }
     
 }
