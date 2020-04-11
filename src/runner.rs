@@ -758,12 +758,13 @@ impl ShellRunner {
     fn popd_back(&mut self, core: &mut ShellCore) -> u8 {
         if let Some(dir) = core.popd_back() {
             let mut dirs: VecDeque<PathBuf> = VecDeque::with_capacity(1);
-            dirs.push_back(dir);
+            dirs.push_back(dir.clone());
             if ! core.sstream.send(ShellStreamMessage::Dirs(dirs)) {
                 //Set exit flag
                 self.exit_flag = Some(255);
             }
-            0
+            //Change directory
+            self.change_directory(core, dir)
         } else {
             1
         }
@@ -775,12 +776,13 @@ impl ShellRunner {
     fn popd_front(&mut self, core: &mut ShellCore) -> u8 {
         if let Some(dir) = core.popd_front() {
             let mut dirs: VecDeque<PathBuf> = VecDeque::with_capacity(1);
-            dirs.push_back(dir);
+            dirs.push_back(dir.clone());
             if ! core.sstream.send(ShellStreamMessage::Dirs(dirs)) {
                 //Set exit flag
                 self.exit_flag = Some(255);
             }
-            0
+            //Change directory
+            self.change_directory(core, dir)
         } else {
             1
         }
@@ -790,6 +792,10 @@ impl ShellRunner {
     /// 
     /// Execute pushd statement.
     fn pushd(&mut self, core: &mut ShellCore, dir: PathBuf) -> u8 {
+        //Cd to dir
+        if self.change_directory(core, dir.clone()) != 0 {
+            return 1
+        }
         core.pushd(dir);
         //Returns dir
         self.dirs(core);
@@ -2295,6 +2301,12 @@ mod tests {
         } else {
             panic!("Not a dirs");
         }
+        //Verify working directory
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
+        //Try to pushd unexisting directory
+        assert_eq!(runner.pushd(&mut core, PathBuf::from("/DOESNOTEXIST/")), 1);
+        assert_eq!(core.get_wrkdir(), PathBuf::from("/tmp/"));
+        let _ = ustream.receive();
         //Popd
         assert_eq!(runner.popd_back(&mut core), 0);
         if let ShellStreamMessage::Dirs(dirs) = &ustream.receive().unwrap()[0] {
@@ -2303,6 +2315,8 @@ mod tests {
         } else {
             panic!("Not a dirs");
         }
+        //Verify working directory
+        assert_eq!(core.get_wrkdir(), PathBuf::from(core.get_home()));
         //You can't empty directory stack, so 1 will be returned
         assert_eq!(runner.popd_front(&mut core),1);
         runner.dirs(&mut core);
