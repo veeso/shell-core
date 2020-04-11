@@ -487,7 +487,7 @@ impl Bash {
         let matches = match opts.parse(&cmdarg) {
             Ok(m) => m,
             Err(e) => {
-                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: Export invalid option: {}", e.to_string())))))
+                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: export: invalid option: {}", e.to_string())))))
             }
         };
         //Handle help
@@ -586,7 +586,7 @@ impl Bash {
         let matches = match opts.parse(&cmdarg) {
             Ok(m) => m,
             Err(e) => {
-                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: History invalid option: {}", e.to_string())))))
+                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: history: invalid option: {}", e.to_string())))))
             }
         };
         //Handle help
@@ -629,7 +629,55 @@ impl Bash {
     //TODO: logout
     //TODO: popd
     //TODO: pushd
-    //TODO: read
+
+    /// ### parse_read
+    /// 
+    /// Parse read commands arguments
+    fn parse_read(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut cmdarg: Vec<String> = Vec::new();
+        for arg in argv.iter() {
+            if ! self.is_ligature(&arg) {
+                cmdarg.push(arg.to_string());
+            } else {
+                break;
+            }
+        }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Parse cmdarg
+        let mut opts = Options::new();
+        opts.optopt("n", "", "Return only after reading exactly NCHARS characters, unless EOF is encountered or read times out, ignoring any delimiter", "nchars");
+        opts.optopt("p", "", "output the string PROMPT without a trailing newline before attempting to read", "prompt");
+        opts.optflag("h", "help", "Display help");
+        let matches = match opts.parse(&cmdarg) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(ShellStatement::Output(None, Some(String::from(format!("bash: Read: invalid option: {}", e.to_string())))))
+            }
+        };
+        //Handle help
+        if matches.opt_present("h") {
+            return Ok(ShellStatement::Output(Some(opts.usage("read")), None))
+        }
+        let prompt: Option<String> = match matches.opt_str("p") {
+            Some(p) => Some(p),
+            None => None
+        };
+        let length: Option<usize> = match matches.opt_str("n") {
+            Some(l) => {
+                match l.parse::<usize>() {
+                    Ok(l) => Some(l),
+                    Err(_) => None
+                }
+            },
+            None => None
+        };
+        let dest: Option<String> = match matches.free.get(0) {
+            Some(arg) => Some(arg.clone()),
+            None => None
+        };
+        Ok(ShellStatement::Read(prompt, length, dest))
+    }
     
     /// ### parse_return
     /// 
@@ -647,7 +695,7 @@ impl Bash {
         Ok(ShellStatement::Return(exitcode.unwrap_or(0)))
     }
 
-    //TODO: set
+    //TODO: set (requires options; bash `help set`)
     
     /// ### parse_source
     /// 
@@ -1135,6 +1183,28 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
+    }
+
+    #[test]
+    fn test_bash_parser_read() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert_eq!(parser.parse_read(&mut input).unwrap(), ShellStatement::Read(None, None, None));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Simple case with ligature
+        let mut input: VecDeque<String> = parser.readline(&String::from("&&")).unwrap();
+        assert_eq!(parser.parse_read(&mut input).unwrap(), ShellStatement::Read(None, None, None));
+        assert_eq!(input.len(), 1); //Should has ligature
+        //With options
+        let mut input: VecDeque<String> = parser.readline(&String::from("-p INPUT: -n 4 PIN")).unwrap();
+        assert_eq!(parser.parse_read(&mut input).unwrap(), ShellStatement::Read(Some(String::from("INPUT:")), Some(4), Some(String::from("PIN"))));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Help
+        let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
+        assert_eq!(parser.parse_read(&mut input).unwrap(), ShellStatement::Output(Some(String::from("read\n\nOptions:\n    -n nchars           Return only after reading exactly NCHARS characters,\n                        unless EOF is encountered or read times out, ignoring\n                        any delimiter\n    -p prompt           output the string PROMPT without a trailing newline\n                        before attempting to read\n    -h, --help          Display help\n")), None));
+        assert_eq!(input.len(), 0); //Should be empty
     }
 
     #[test]
