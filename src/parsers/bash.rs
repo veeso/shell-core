@@ -323,8 +323,9 @@ impl Bash {
 
     /// ### cut_argv_to_delim
     /// 
-    /// Cut arguments until the first delimiter is found
-    fn cut_argv_to_delim(&self, argv: &mut VecDeque<String>) {
+    /// Cut arguments until the first delimiter is found.
+    /// Returns removed elements
+    fn cut_argv_to_delim(&self, argv: &mut VecDeque<String>) -> Vec<String> {
         let mut trunc: usize = 0;
         for arg in argv.iter() {
             if self.is_ligature(&arg) {
@@ -333,9 +334,13 @@ impl Bash {
                 trunc += 1;
             }
         }
+        let mut out: Vec<String> = Vec::with_capacity(trunc);
         for i in 0..trunc {
-            argv.pop_front();
-        } 
+            if let Some(arg) = argv.pop_front() {
+                out.push(arg)
+            }
+        }
+        out
     }
 
     //@! Statements parsers
@@ -894,7 +899,27 @@ impl Bash {
 
     //TODO: time
     //TODO: until/while
-    //TODO: unset
+    
+    /// ### parse_unset
+    /// 
+    /// Parse unset command arguments
+    fn parse_unset(&self, argv: &mut VecDeque<String>) -> Result<Vec<ShellStatement>, ParserError> {
+        let mut res: Result<Vec<ShellStatement>, ParserError> = Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: unset: variable name is required as argument")));
+        //Get arguments for this command
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
+        //For each argument, remove it from storage
+        if argv.len() > 0 {
+            //Instantiate statements
+            let mut statements: Vec<ShellStatement> = Vec::with_capacity(argv.len());
+            //Iterate over variables
+            for var in argv.iter() {
+                statements.push(ShellStatement::Unset(var.clone()));
+            }
+            //Set result
+            res = Ok(statements);
+        }
+        res
+    }
     
 }
 
@@ -1515,6 +1540,25 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("&&")).unwrap();
         assert!(parser.parse_source(&core, &mut input).is_err());
         assert_eq!(input.len(), 1); //Should contain ligature
+    }
+
+    #[test]
+    fn test_bash_parser_unset() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //No arguments
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert!(parser.parse_unset(&mut input).is_err());
+        assert_eq!(input.len(), 0); //Should be empty
+        //With ligatures
+        let mut input: VecDeque<String> = parser.readline(&String::from("&&")).unwrap();
+        assert!(parser.parse_unset(&mut input).is_err());
+        assert_eq!(input.len(), 1); //Should have ligature
+        //With arguments
+        let mut input: VecDeque<String> = parser.readline(&String::from("FOO BAR &&")).unwrap();
+        assert_eq!(parser.parse_unset(&mut input).unwrap(), vec![ShellStatement::Unset(String::from("FOO")), ShellStatement::Unset(String::from("BAR"))]);
+        assert_eq!(input.len(), 1); //Should have ligature
+
     }
 
     //@! States
