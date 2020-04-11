@@ -429,23 +429,41 @@ impl Bash {
     }
 
     //TODO: declare
-    //TODO: dirs
+    
+    /// ### parse_dirs
+    /// 
+    /// Parse dirs arguments
+    fn parse_dirs(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Check args
+        if argv.len() > 0 {
+            let arg: String = argv.get(0).unwrap().clone();
+            if ! self.is_ligature(&arg) {
+                //Too many arguments
+                self.cut_argv_to_delim(argv);
+                return Err(ParserError::new(ParserErrorCode::TooManyArgs, format!("bash: dirs: {}: invalid option", arg)))
+            }
+        }
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        Ok(ShellStatement::Dirs)
+    }
+
     //TODO: exec
 
     /// ### parse_exit
     /// 
     /// Parse exit arguments
     fn parse_exit(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
-        let mut rc: u8 = 0;
+        let mut exitcode: Option<u8> = None;
         if argv.len() > 0 {
-            let arg: String = argv.get(0).unwrap().to_string();
-            if ! self.is_ligature(&arg) { //If arg is not ligature, Treat arg 0
-                rc = arg.parse().unwrap_or(2);
+            let arg: &String = argv.get(0).unwrap();
+            if ! self.is_ligature(arg) {
+                exitcode = Some(arg.parse::<u8>().unwrap_or(2));
             }
         }
-        //Remove useless arguments
+        //Remove arguments
         self.cut_argv_to_delim(argv);
-        Ok(ShellStatement::Exit(rc))
+        Ok(ShellStatement::Exit(exitcode.unwrap_or(0)))
     }
 
     /// ### parse_export
@@ -611,7 +629,22 @@ impl Bash {
     //TODO: popd
     //TODO: pushd
     //TODO: read
-    //TODO: return
+    
+    /// ### parse_return
+    /// 
+    /// Parse return arguments
+    fn parse_return(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut exitcode: Option<u8> = None;
+        if argv.len() > 0 {
+            let arg: &String = argv.get(0).unwrap();
+            if ! self.is_ligature(arg) {
+                exitcode = Some(arg.parse::<u8>().unwrap_or(2));
+            }
+        }
+        //Remove arguments
+        self.cut_argv_to_delim(argv);
+        Ok(ShellStatement::Return(exitcode.unwrap_or(0)))
+    }
     //TODO: set
     //TODO: source
     //TODO: time
@@ -989,10 +1022,27 @@ mod tests {
     }
 
     #[test]
+    fn test_bash_parser_dirs() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert_eq!(parser.parse_dirs(&mut input).unwrap(), ShellStatement::Dirs);
+        assert_eq!(input.len(), 0); //Should be empty
+        //Arg is ligature
+        let mut input: VecDeque<String> = parser.readline(&String::from(";")).unwrap();
+        assert_eq!(parser.parse_dirs(&mut input).unwrap(), ShellStatement::Dirs);
+        assert_eq!(input.len(), 1); //Should be empty
+        //Bad arg
+        let mut input: VecDeque<String> = parser.readline(&String::from("a")).unwrap();
+        assert!(parser.parse_dirs(&mut input).is_err());
+        assert_eq!(input.len(), 0); //Should be empty
+    }
+
+    #[test]
     fn test_bash_parser_exit() {
         let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
         let parser: Bash = Bash::new();
-        //Parse some CD statements
         //Simple case
         let mut input: VecDeque<String> = parser.readline(&String::from("0")).unwrap();
         assert_eq!(parser.parse_exit(&mut input).unwrap(), ShellStatement::Exit(0));
@@ -1066,8 +1116,31 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
-
     }
+
+    #[test]
+    fn test_bash_parser_return() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("0")).unwrap();
+        assert_eq!(parser.parse_return(&mut input).unwrap(), ShellStatement::Return(0));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("128")).unwrap();
+        assert_eq!(parser.parse_return(&mut input).unwrap(), ShellStatement::Return(128));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Bad case
+        let mut input: VecDeque<String> = parser.readline(&String::from("foobar")).unwrap();
+        assert_eq!(parser.parse_return(&mut input).unwrap(), ShellStatement::Return(2));
+        assert_eq!(input.len(), 0); //Should be empty
+        //No arg
+        let mut input: VecDeque<String> = VecDeque::new();
+        assert_eq!(parser.parse_return(&mut input).unwrap(), ShellStatement::Return(0));
+        assert_eq!(input.len(), 0); //Should be empty
+    }
+
+    //@! States
 
     #[test]
     fn test_bash_parser_state_is_on_top() {
