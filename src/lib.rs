@@ -170,6 +170,7 @@ pub enum ShellStatement {
     Source(PathBuf),
     Time(Task),
     Unalias(String),
+    Unset(String),
     Value(String),
     While(ShellExpression, ShellExpression),
     WriteFile(String, String, bool)
@@ -589,6 +590,13 @@ impl PartialEq for ShellStatement {
                     false
                 }
             },
+            ShellStatement::Unset(var) => {
+                if let ShellStatement::Unset(var_cmp) = other {
+                    var == var_cmp
+                } else {
+                    false
+                }
+            },
             ShellStatement::Value(val) => {
                 if let ShellStatement::Value(val_cmp) = other {
                     val == val_cmp
@@ -727,6 +735,10 @@ mod tests {
         assert_eq!(ShellStatement::Unalias(String::from("ll")), ShellStatement::Unalias(String::from("ll")));
         assert_ne!(ShellStatement::Unalias(String::from("ll")), ShellStatement::Unalias(String::from("filesize")));
         assert_ne!(ShellStatement::Unalias(String::from("ll")), ShellStatement::Break);
+        //Unset
+        assert_eq!(ShellStatement::Unset(String::from("FOO")), ShellStatement::Unset(String::from("FOO")));
+        assert_ne!(ShellStatement::Unset(String::from("FOO")), ShellStatement::Unset(String::from("BAR")));
+        assert_ne!(ShellStatement::Unset(String::from("FOO")), ShellStatement::Break);
         //Value
         assert_eq!(ShellStatement::Value(String::from("5")), ShellStatement::Value(String::from("5")));
         assert_ne!(ShellStatement::Value(String::from("5")), ShellStatement::Value(String::from("15")));

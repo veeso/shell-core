@@ -1091,6 +1091,9 @@ impl ShellRunner {
                     ShellStatement::Unalias(alias) => {
                         rc = self.unalias(core, alias.clone());
                     },
+                    ShellStatement::Unset(var) => {
+                        core.value_unset(var);
+                    },
                     ShellStatement::Value(val) => {
                         output = self.eval_value(core, val.clone());
                     },
@@ -2469,6 +2472,9 @@ mod tests {
         //Instantiate cores
         let (mut core, ustream): (ShellCore, UserStream) = ShellCore::new(None, 128, Box::new(Bash {}));
         //Prepare environment to run
+        //Set foo bar value
+        core.storage_set(String::from("FOOBAR"), String::from("1"));
+        assert!(core.value_get(&String::from("FOOBAR")).is_some());
         //Prepare case
         //Let's try an unmatched case
         let case0: ShellExpression = ShellExpression {
@@ -2525,6 +2531,7 @@ mod tests {
                 //ShellStatement::Source(PathBuf::from("/tmp/stuff.sh")), TODO: requires readlin, TaskRelation::Unrelated
                 (ShellStatement::Time(Task::new(vec![String::from("echo"), String::from("TIME")], Redirection::Stdout, Redirection::Stderr)), TaskRelation::Unrelated),
                 (ShellStatement::Unalias(String::from("ll")), TaskRelation::Unrelated),
+                (ShellStatement::Unset(String::from("FOOBAR")), TaskRelation::Unrelated),
                 (ShellStatement::While(ShellExpression {statements: vec![(ShellStatement::Value(String::from("1")), TaskRelation::Unrelated)]}, ShellExpression {statements: vec![(ShellStatement::Break, TaskRelation::Unrelated)]}), TaskRelation::Unrelated),
                 (ShellStatement::WriteFile(String::from("/tmp/rust.out"), String::from("OUTPUT"), true), TaskRelation::Unrelated),
                 (ShellStatement::Exit(1), TaskRelation::Unrelated)
@@ -2657,6 +2664,8 @@ mod tests {
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("7"));
         //Verify Alias
         assert!(core.alias_get(&String::from("ll")).is_none());
+        //Verify FOOBAR was unset
+        assert!(core.value_get(&String::from("FOOBAR")).is_none());
     }
     
     #[test]
