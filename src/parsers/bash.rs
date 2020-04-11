@@ -406,7 +406,7 @@ impl Bash {
                 if argv.len() > 1 {
                     if ! self.is_ligature(&argv[1]) {
                         self.cut_argv_to_delim(argv);
-                        return Err(ParserError::new(ParserErrorCode::TooManyArgs, String::from("bash: cd: too many arguments")))
+                        return Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: cd: too many arguments")))
                     }
                 }
                 if self.is_ligature(&argv[0]) {
@@ -440,7 +440,7 @@ impl Bash {
             if ! self.is_ligature(&arg) {
                 //Too many arguments
                 self.cut_argv_to_delim(argv);
-                return Err(ParserError::new(ParserErrorCode::TooManyArgs, format!("bash: dirs: {}: invalid option", arg)))
+                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: dirs: {}: invalid option", arg)))
             }
         }
         //Remove useless arguments
@@ -605,7 +605,7 @@ impl Bash {
             if let Ok(index) = index.parse::<usize>() {
                 Ok(ShellStatement::History(HistoryOptions::Del(index)))
             } else {
-                Err(ParserError::new(ParserErrorCode::TooManyArgs, String::from("history del index must be a number")))
+                Err(ParserError::new(ParserErrorCode::BadArgs, String::from("history del index must be a number")))
             }
         } else if let Some(file) = matches.opt_str("r") {
             //Resolve path
@@ -622,6 +622,7 @@ impl Bash {
             Ok(ShellStatement::History(HistoryOptions::Print))
         }
     }
+
     //TODO: if
     //TODO: let
     //TODO: local
@@ -645,8 +646,26 @@ impl Bash {
         self.cut_argv_to_delim(argv);
         Ok(ShellStatement::Return(exitcode.unwrap_or(0)))
     }
+
     //TODO: set
-    //TODO: source
+    
+    /// ### parse_source
+    /// 
+    /// Parse source arguments
+    fn parse_source(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut res: Result<ShellStatement, ParserError> = Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: source: file name is required as argument")));
+        if let Some(arg) = argv.get(0) {
+            if ! self.is_ligature(arg) {
+                //Resolve path
+                let file: PathBuf = core.resolve_path(arg.clone());
+                res = Ok(ShellStatement::Source(file));
+            }
+        }
+        //Remove arguments
+        self.cut_argv_to_delim(argv);
+        res
+    }
+
     //TODO: time
     //TODO: until/while
     
@@ -1138,6 +1157,29 @@ mod tests {
         let mut input: VecDeque<String> = VecDeque::new();
         assert_eq!(parser.parse_return(&mut input).unwrap(), ShellStatement::Return(0));
         assert_eq!(input.len(), 0); //Should be empty
+    }
+
+    #[test]
+    fn test_bash_parser_source() {
+        let (core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("/tmp/bash.sh")).unwrap();
+        assert_eq!(parser.parse_source(&core, &mut input).unwrap(), ShellStatement::Source(PathBuf::from("/tmp/bash.sh")));
+        assert_eq!(input.len(), 0); //Should be empty
+        //Home case
+        let bashrc: PathBuf = PathBuf::from(format!("{}/.bashrc", core.get_home().as_path().display()).as_str());
+        let mut input: VecDeque<String> = parser.readline(&String::from("~/.bashrc")).unwrap();
+        assert_eq!(parser.parse_source(&core, &mut input).unwrap(), ShellStatement::Source(bashrc));
+        assert_eq!(input.len(), 0); //Should be empty
+        //No args
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert!(parser.parse_source(&core, &mut input).is_err());
+        assert_eq!(input.len(), 0); //Should be empty
+        //Ligature as arg
+        let mut input: VecDeque<String> = parser.readline(&String::from("&&")).unwrap();
+        assert!(parser.parse_source(&core, &mut input).is_err());
+        assert_eq!(input.len(), 1); //Should contain ligature
     }
 
     //@! States

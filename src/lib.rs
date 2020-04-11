@@ -295,11 +295,12 @@ pub struct ParserError {
 ///
 /// - Incomplete: the statement is incomplete, further input is required. This should bring the Core to Waiting state
 /// - BadToken: a bad token was found in the statement
+/// - BadArgs: Bad arguments provided to commands
 #[derive(Copy, Clone, PartialEq, std::fmt::Debug)]
 pub enum ParserErrorCode {
     Incomplete,
     BadToken,
-    TooManyArgs,
+    BadArgs,
 }
 
 /// ## ParseStatement
