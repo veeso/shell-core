@@ -549,7 +549,7 @@ impl Bash {
                 let environ: HashMap<String, String> = core.environ_getall();
                 let mut output: String = String::new();
                 for (key, value) in environ.iter() {
-                    output.push_str(format!("declare -x {}={}\n", key, value).as_str());
+                    output.push_str(format!("declare -x {}=\"{}\"\n", key, value).as_str());
                 }
                 Ok(ShellStatement::Output(Some(output), None))
             }
@@ -625,8 +625,66 @@ impl Bash {
 
     //TODO: if
     //TODO: let
-    //TODO: local
-    //TODO: logout
+    
+    /// ### parse_local
+    /// 
+    /// Parse local command arguments
+    fn parse_local(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let mut statement: ShellStatement = match argv.get(0) { //If arg is set
+            Some(arg) => {
+                let mut key: String = String::new();
+                let mut val: String = String::new();
+                let mut buff: String = String::new();
+                let mut escaped: bool = false;
+                //Iterate over argument characters
+                for c in arg.chars() {
+                    if ! escaped { //Handle separators and other stuff
+                        if c == '=' && ! key.is_empty() { //Value starts
+                            key = buff.clone();
+                            buff.clear();
+                            continue;
+                        }
+                    }
+                    //Handle escape
+                    if c == '\\' && ! escaped {
+                        escaped = true;
+                    } else {
+                        escaped = false;
+                    }
+                    //Push character to buff
+                    buff.push(c);
+                }
+                if ! key.is_empty() {
+                    //Set value
+                    val = buff.clone();
+                } else {
+                    key = buff.clone();
+                }
+                //Evaluate value as an expression
+                let val: ShellExpression = match self.eval_expression(core, &val) {
+                    Ok(expr) => expr,
+                    Err(err) => return Err(err)
+                };
+                //Return export
+                ShellStatement::Export(key, val)
+            },
+            None => { //No args
+                //Print storage values
+                let storage: HashMap<String, String> = core.storage_getall();
+                let mut output: String = String::new();
+                for (key, value) in storage.iter() {
+                    output.push_str(format!("{}=\"{}\"\n", key, value).as_str());
+                }
+                ShellStatement::Output(Some(output), None)
+            }
+        };
+        //Remove useless arguments
+        self.cut_argv_to_delim(argv);
+        //Return statement
+        Ok(statement)
+    }
+
+    //TODO: logout (???)
     
     /// ### parse_popd
     /// 
@@ -1215,6 +1273,20 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
+    }
+
+    #[test]
+    fn test_bash_parser_local() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Export two values first
+        core.storage_set(String::from("FOO"), String::from("1"));
+        core.storage_set(String::from("BAR"), String::from("2"));
+        //No args
+        let mut input: VecDeque<String> = parser.readline(&String::from("")).unwrap();
+        assert_eq!(parser.parse_local(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("BAR=\"2\"\nFOO=\"1\"\n")), None));
+        assert_eq!(input.len(), 0); //Should be empty
+        //TODO: eval is required
     }
 
     #[test]
