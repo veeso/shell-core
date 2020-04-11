@@ -383,6 +383,8 @@ impl ShellCore {
             let path_after_tilde = &orig_path.as_str()[1..];
             resolved_path = String::from(self.home_dir.as_path().to_str().unwrap());
             resolved_path.push_str(path_after_tilde);
+        } else if resolved_path == "-" {
+            resolved_path = String::from(self.prev_dir.as_path().to_str().unwrap());
         }
         PathBuf::from(resolved_path)
     }
@@ -915,6 +917,8 @@ mod tests {
         let mut dev_home_path: PathBuf = core.home_dir.clone();
         dev_home_path.push("develop/Rust/");
         assert_eq!(core.resolve_path(String::from("~/develop/Rust/")), dev_home_path);
+        //Check previous directory
+        assert_eq!(core.resolve_path(String::from("-")), core.get_prev_dir());
     }
 
     #[test]
