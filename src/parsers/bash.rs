@@ -551,7 +551,7 @@ impl Bash {
         //Parse cmdarg
         let mut opts = Options::new();
         opts.optflag("p", "", "Print all exported variables");
-        //TODO: -n (unset) option
+        opts.optflag("n", "", "Remove NAME from environment");
         opts.optflag("h", "", "Display help");
         let matches = match opts.parse(&argv) {
             Ok(m) => m,
@@ -579,6 +579,7 @@ impl Bash {
             let mut val: String = String::new();
             let mut buff: String = String::new();
             let mut escaped: bool = false;
+            let remove: bool = matches.opt_present("n");
             //Iterate over argument characters
             for c in arg.chars() {
                 if ! escaped { //Handle separators and other stuff
@@ -609,7 +610,11 @@ impl Bash {
                 Err(err) => return Err(err)
             };
             //Return export
-            Ok(ShellStatement::Export(key, val))
+            if remove {
+                Ok(ShellStatement::Unset(key))
+            } else {
+                Ok(ShellStatement::Export(key, val))
+            }
         }
     }
 
@@ -1325,6 +1330,7 @@ mod tests {
         assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p                  Print all exported variables\n    -h                  Display help\n")), None)); //Prints help
         assert_eq!(input.len(), 0); //Should be empty
         //TODO: parse_argv required for value assignation
+        //TODO: -n argument
     }
 
     #[test]
