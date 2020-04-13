@@ -148,6 +148,9 @@ impl Bash {
                     if ((states.is_on_top(BashParserBlock::Quoted('"')) && c == '"') || (states.is_on_top(BashParserBlock::Quoted('\'')) && c == '\'')) && prev_char != '\\' {
                         skip_char = true;
                     }
+                    if (c == '>' || c == '<' || c == '|' || c == '&') && states.is_quoted() {
+                        word_buf.push('\\');
+                    }
                     //Ignore escape block opener
                     if states.is_escaped() && c == '\\' && next == '"' {
                         skip_char = true;
@@ -164,6 +167,12 @@ impl Bash {
                     let orig_word_buf = word_buf.clone();
                     for (index, c) in orig_word_buf.chars().enumerate() {
                         let next: Option<char> = orig_word_buf.chars().nth(index + 1);
+                        if escaped && (c == '>' || c == '<' || c == '|' || c == '&') {
+                            word_buf = word_buf.replace("\\>", ">");
+                            word_buf = word_buf.replace("\\<", "<");
+                            word_buf = word_buf.replace("\\|", "|");
+                            word_buf = word_buf.replace("\\&", "&");
+                        }
                         if let Some(prev) = remainder {
                             //Look for &&
                             if prev == '&' && c == '&' {
@@ -620,7 +629,16 @@ impl Bash {
 
     //TODO: for
     //TODO: function
-    //TODO: getopts
+
+    /* TODO: getopts (requires statement getopts) 
+    /// ### parse_getopts
+    /// 
+    /// Parse getopts command arguments
+    fn parse_getopts(&self, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+
+    }
+    */
+
     //TODO: help
     
     /// ### parse_history
@@ -1112,6 +1130,12 @@ mod tests {
         assert_eq!(parser.readline(&String::from("cd \\;")).unwrap(), vec![String::from("cd"), String::from("\\;")]);
         //Try error
         assert!(parser.readline(&String::from("echo \"$(pw\"d)")).is_err());
+        //Redirections
+        assert_eq!(parser.readline(&String::from("echo \"5>\"")).unwrap(), vec![String::from("echo"), String::from("5>")]);
+        assert_eq!(parser.readline(&String::from("echo \">/tmp/\"")).unwrap(), vec![String::from("echo"), String::from(">/tmp/")]);
+        assert_eq!(parser.readline(&String::from("echo \"5>/tmp/\"")).unwrap(), vec![String::from("echo"), String::from("5>/tmp/")]);
+        assert_eq!(parser.readline(&String::from("echo \"5>>/tmp/\"")).unwrap(), vec![String::from("echo"), String::from("5>>/tmp/")]);
+        assert_eq!(parser.readline(&String::from("echo \">>\"")).unwrap(), vec![String::from("echo"), String::from(">>")]);
         //Over lines
         assert_eq!(parser.readline(&String::from("cd /tmp/\ncd /home/")).unwrap(), vec![String::from("cd"), String::from("/tmp/"), String::from(";"), String::from("cd"), String::from("/home/")]);
         //Separators (&&)
@@ -1327,7 +1351,7 @@ mod tests {
         assert_eq!(input.len(), 0); //Should be empty
         //Help argument
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
-        assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p                  Print all exported variables\n    -h                  Display help\n")), None)); //Prints help
+        assert_eq!(parser.parse_export(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("export\n\nOptions:\n    -p                  Print all exported variables\n    -n                  Remove NAME from environment\n    -h                  Display help\n")), None)); //Prints help
         assert_eq!(input.len(), 0); //Should be empty
         //TODO: parse_argv required for value assignation
         //TODO: -n argument
