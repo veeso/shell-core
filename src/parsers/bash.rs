@@ -27,7 +27,7 @@
 
 extern crate getopts;
 
-use crate::{HistoryOptions, ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
+use crate::{HistoryOptions, MathOperator, ParseStatement, ParserError, ParserErrorCode, ShellCore, ShellExpression, ShellStatement, TaskRelation};
 use getopts::Options;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -696,7 +696,174 @@ impl Bash {
     }
 
     //TODO: if
-    //TODO: let
+    
+    /// ### parse_let
+    /// 
+    /// Parse Let command arguments
+    fn parse_let(&self, core: &ShellCore, argv: &mut VecDeque<String>) -> Result<Vec<ShellStatement>, ParserError> {
+        /*
+        FIXME: requires multiple operators
+        Let should definetely support the possibility to have more than one expression (e.g. 5+5*2)
+        This has two problems though:
+        - requires iterative expressions (which not a big issue tbh)
+        - the operators must be ordered (yep, because 5 + 5 * 2 makes 15, and not 20)
+        */
+        //Get arguments
+        let argv: Vec<String> = self.cut_argv_to_delim(argv);
+        //If no argument is provided, return error
+        if argv.is_empty() {
+            return Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: let: expected expression")))
+        }
+        //Parse arguments; each argument is a statement
+        let mut statements: Vec<ShellStatement> = Vec::with_capacity(argv.len());
+        //Iterate over arguments
+        for expr in argv.iter() {
+            //Prepare statement tokens
+            let mut result: Option<String> = None;
+            let mut arg1: Option<String> = None;
+            let mut math_operator: Option<MathOperator> = None;
+            let mut arg2: Option<String> = None;
+            let mut tmpbuff: String = String::new();
+            let mut prev: char = ' ';
+            //Iterate over arg
+            for (i, c) in expr.chars().enumerate() {
+                let next: char = expr.chars().nth(i + 1).unwrap_or(' ');
+                match c {
+                    '=' => { //Handle equal
+                        if prev != '<' && prev != '>' && prev != '=' && prev != '!' && next != '=' { //Is a single '='
+                            if result.is_none() { //Set result
+                                if tmpbuff.is_empty() { //If tmpbuff is empty, return error
+                                    return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: expression expected", expr)))
+                                }
+                                result = Some(tmpbuff.clone());
+                                tmpbuff.clear();
+                            } else {
+                                //Can't use more than one '='
+                                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: trying to assign a value to a non l-value", expr)))
+                            }
+                        } else if next != '=' {
+                            if result.is_none() { //Tried to use operator before defining a result
+                                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: result name must be specified", expr)))
+                            }
+                            //Is part of math operator
+                            if math_operator.is_some() {
+                                //Can't set more than one math operator
+                                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: expression expected", expr)))
+                            }
+                            //Set operator based on previous character
+                            match prev {
+                                '<' => math_operator = Some(MathOperator::LessOrEqual),
+                                '>' => math_operator = Some(MathOperator::GreaterOrEqual),
+                                '=' => math_operator = Some(MathOperator::Equal),
+                                '!' => math_operator = Some(MathOperator::NotEqual),
+                                _ => return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: unknown operator {}{}", expr, prev, c)))
+                            }
+                            //Set arg1
+                            if arg1.is_none() {
+                                //Convert tmpbuff to variable or number
+                                let value: String = match tmpbuff.parse::<isize>() {
+                                    Ok(_) => tmpbuff.clone(),
+                                    Err(_) => format!("${}", tmpbuff)
+                                };
+                                arg1 = Some(value);
+                                //Clear tmpbuff
+                                tmpbuff.clear();
+                            }
+                        }
+                    },
+                    '+' | '-' | '*' | '/' | '%' | '<' | '>' | '^' | '&' | '|'  => { //Operator
+                        if result.is_none() { //Tried to use operator before defining a result
+                            return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: result name must be specified", expr)))
+                        }
+                        if math_operator.is_some() {
+                            //Can't set more than one math operator
+                            return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: expression expected", expr)))
+                        }
+                        //Set operator
+                        match c {
+                            '+' => math_operator = Some(MathOperator::Sum),
+                            '-' => math_operator = Some(MathOperator::Subtract),
+                            '*' => {
+                                if prev == '*' {
+                                    math_operator = Some(MathOperator::Power);
+                                } else if next != '*' {
+                                    math_operator = Some(MathOperator::Multiply);
+                                } //Else ignore, will be power on the next iteration
+                            },
+                            '/' => math_operator = Some(MathOperator::Divide),
+                            '%' => math_operator = Some(MathOperator::Module),
+                            '<' => {
+                                if prev == '<' {
+                                    math_operator = Some(MathOperator::ShiftLeft);
+                                } else if next != '=' && next != '<' { //Beware of less or equal
+                                    math_operator = Some(MathOperator::Less);
+                                }
+                            },
+                            '>' => {
+                                if prev == '>' {
+                                    math_operator = Some(MathOperator::ShiftRight);
+                                } else if next != '=' && next != '>' { //Beware of greater or equal
+                                    math_operator = Some(MathOperator::Greater);
+                                }
+                            },
+                            '^' => {
+                                math_operator = Some(MathOperator::Xor);
+                            },
+                            '&' => {
+                                math_operator = Some(MathOperator::And);
+                            },
+                            '|' => {
+                                math_operator = Some(MathOperator::Or);
+                            },
+                            _ => return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: unknown operator {}{}", expr, prev, c)))
+                        }
+                        //Set arg1
+                        if arg1.is_none() {
+                            //Convert tmpbuff to variable or number
+                            let value: String = match tmpbuff.parse::<isize>() {
+                                Ok(_) => tmpbuff.clone(),
+                                Err(_) => format!("${}", tmpbuff)
+                            };
+                            arg1 = Some(value);
+                            //Clear tmpbuff
+                            tmpbuff.clear();
+                        }
+                    }
+                    '!' => {},
+                    _ => {
+                        //Push to tmpbuff and update prev
+                        tmpbuff.push(c);
+                    }
+                }
+                prev = c;
+            }
+            //Check arguments
+            if math_operator.is_none() {
+                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: operator expected", expr)))
+            }
+            if tmpbuff.len() == 0 || arg1.is_none() {
+                return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: expression expected", expr)))
+            }
+            //Set arg2
+            //Convert tmpbuff to variable or number
+            let value: String = match tmpbuff.parse::<isize>() {
+                Ok(_) => tmpbuff.clone(),
+                Err(_) => format!("${}", tmpbuff)
+            };
+            //Expressions are not supported; convert them straight to expressions
+            //FIXME: arguments should be evaluated
+            let arg1: ShellExpression = ShellExpression {statements: vec![(ShellStatement::Value(arg1.unwrap()), TaskRelation::Unrelated)]};
+            let arg2: ShellExpression = ShellExpression {statements: vec![(ShellStatement::Value(value), TaskRelation::Unrelated)]};
+            let result: String = match result {
+                Some(r) => r,
+                None => return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: let: {}: result name must be specified", expr)))
+            };
+            //Push expression to statement
+            statements.push(ShellStatement::Let(result, arg1, math_operator.unwrap_or(MathOperator::Sum), arg2));
+        }
+        //Return statements
+        Ok(statements)
+    }
     
     /// ### parse_local
     /// 
@@ -1390,6 +1557,95 @@ mod tests {
         let mut input: VecDeque<String> = parser.readline(&String::from("-h")).unwrap();
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
+    }
+
+    #[test]
+    fn test_bash_parser_let() {
+        let (mut core, _): (ShellCore, UserStream) = ShellCore::new(None, 32, Box::new(Bash::new()));
+        let parser: Bash = Bash::new();
+        //Simple case
+        let mut input: VecDeque<String> = parser.readline(&String::from("ABC=A+5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("ABC"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$A")), TaskRelation::Unrelated)]}, MathOperator::Sum, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Multiple expressions
+        let mut input: VecDeque<String> = parser.readline(&String::from("ABC=7-5 RES=ABC*7")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("ABC"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("7")), TaskRelation::Unrelated)]}, MathOperator::Subtract, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]}), ShellStatement::Let(String::from("RES"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$ABC")), TaskRelation::Unrelated)]}, MathOperator::Multiply, ShellExpression {statements: vec![(ShellStatement::Value(String::from("7")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Other operators
+        //Less
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X<5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Less, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Greater
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X>5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Greater, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Xor
+        let mut input: VecDeque<String> = parser.readline(&String::from("Y=X^5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Xor, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //And
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X&5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::And, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Or
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X|5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Or, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Divide
+        let mut input: VecDeque<String> = parser.readline(&String::from("Y=X/5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Divide, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Module
+        let mut input: VecDeque<String> = parser.readline(&String::from("Y=X%5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Module, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Complex operators
+        //Equal
+        let mut input: VecDeque<String> = parser.readline(&String::from("Y=X==5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Equal, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Not Equal
+        let mut input: VecDeque<String> = parser.readline(&String::from("Y=X!=5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::NotEqual, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Shift right
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X>>5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::ShiftRight, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Shift left
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X<<5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::ShiftLeft, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Power
+        let mut input: VecDeque<String> = parser.readline(&String::from("Y=X**5")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::Power, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Greater or equal
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X>=5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::GreaterOrEqual, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Less or equal
+        let mut input: VecDeque<String> = parser.readline(&String::from("\"Y=X<=5\"")).unwrap();
+        assert_eq!(parser.parse_let(&core, &mut input).unwrap(), vec![ShellStatement::Let(String::from("Y"), ShellExpression {statements: vec![(ShellStatement::Value(String::from("$X")), TaskRelation::Unrelated)]}, MathOperator::LessOrEqual, ShellExpression {statements: vec![(ShellStatement::Value(String::from("5")), TaskRelation::Unrelated)]})]);
+        assert_eq!(input.len(), 0);
+        //Errors
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=X=Y")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=5+")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=5**")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A==5")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
+        let mut input: VecDeque<String> = parser.readline(&String::from("A=5!6")).unwrap();
+        assert!(parser.parse_let(&core, &mut input).is_err());
     }
 
     #[test]
