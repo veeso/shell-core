@@ -699,6 +699,18 @@ impl ShellRunner {
             MathOperator::Equal => {
                 (operator1 == operator2) as isize
             },
+            MathOperator::Greater => {
+                (operator1 > operator2) as isize
+            },
+            MathOperator::GreaterOrEqual => {
+                (operator1 >= operator2) as isize
+            },
+            MathOperator::Less => {
+                (operator1 < operator2) as isize
+            },
+            MathOperator::LessOrEqual => {
+                (operator1 <= operator2) as isize
+            },
             MathOperator::Module => {
                 if operator2 == 0 { //Report error if dividing by 0
                     if ! core.sstream.send(ShellStreamMessage::Error(ShellError::Math(MathError::DividedByZero))) {
@@ -2185,6 +2197,78 @@ mod tests {
             statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
         };
         assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Equal, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
+        //Greater
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("8")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Greater, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
+        //Greater (but not Greater)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Greater, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
+        //GreaterOrEqual
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::GreaterOrEqual, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
+        //GreaterOrEqual (but not GreaterOrEqual)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::GreaterOrEqual, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
+        //Less
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("18")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Less, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
+        //Less (but not Less)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("32")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::Less, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
+        //LessOrEqual
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("16")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::LessOrEqual, operator2), 0);
+        assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("1"));
+        //LessOrEqual (but not LessOrEqual)
+        let operator1: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("87")), TaskRelation::Unrelated)]
+        };
+        let operator2: ShellExpression = ShellExpression {
+            statements: vec![(ShellStatement::Value(String::from("34")), TaskRelation::Unrelated)]
+        };
+        assert_eq!(runner.let_perform(&mut core, String::from("RESULT"), operator1, MathOperator::LessOrEqual, operator2), 0);
         assert_eq!(core.value_get(&String::from("RESULT")).unwrap(), String::from("0"));
         //Module
         let operator1: ShellExpression = ShellExpression {
