@@ -1351,6 +1351,20 @@ mod tests {
     }
 
     #[test]
+    fn test_bash_parser_cut_argv_to_token() {
+        let parser: Bash = Bash::new();
+        let mut argv: VecDeque<String> = VecDeque::new();
+        argv.push_back(String::from("a"));
+        argv.push_back(String::from("then"));
+        argv.push_back(String::from("b"));
+        let first: VecDeque<String> = parser.cut_argv_to_token(&mut argv, String::from("then"));
+        assert_eq!(*first.get(0).unwrap(), String::from("a"));
+        assert!(first.get(1).is_none());
+        assert_eq!(*argv.get(0).unwrap(), String::from("b"));
+        assert!(argv.get(1).is_none());
+    }
+
+    #[test]
     fn test_bash_parser_readline() {
         let parser: Bash = Bash::new();
         assert_eq!(parser.readline(&String::from("cd /tmp/")).unwrap(), vec![String::from("cd"), String::from("/tmp/")]);
