@@ -111,7 +111,7 @@ impl Bash {
             Ok(argv) => argv,
             Err(err) => return Err(err)
         };
-        self.parse_argv(core, state, argv)
+        self.parse_argv(core, state, &mut argv)
     }
 
     /// ### readline
@@ -723,7 +723,38 @@ impl Bash {
         }
     }
 
-    //TODO: if
+    /// ### parse_if
+    /// 
+    /// Parse if command expression
+    fn parse_if(&self, core: &mut ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        //Is expression until a then is found
+        let mut if_condition: VecDeque<String> = VecDeque::new();
+        for arg in argv.iter() {
+            let arg: String = arg.clone();
+            argv.pop_front();
+            //Break on then
+            if arg == "then" {
+                break;
+            }
+            //Otherwise push arg to if condition and pop argv
+            if_condition.push_back(arg);
+        }
+        //Instantiate sub states
+        let mut states: BashParserState = BashParserState::new();
+        let if_condition: ShellExpression = match self.parse_argv(core, states, &mut if_condition) {
+            Ok(expr) => expr,
+            Err(err) => return Err(err)
+        };
+        //Parse expression
+        let mut states: BashParserState = BashParserState::new();
+        states.stack_state(BashParserBlock::CodeBlock(BashCodeBlock::If));
+        let if_perform: ShellExpression = match self.parse_argv(core, states, argv) {
+            Ok(expr) => expr,
+            Err(err) => return Err(err)
+        };
+        //TODO: if_else???
+        Ok(ShellStatement::If(if_condition, if_perform, None))
+    }
     
     /// ### parse_let
     /// 
@@ -1581,6 +1612,8 @@ mod tests {
         assert_eq!(parser.parse_history(&core, &mut input).unwrap(), ShellStatement::Output(Some(String::from("history\n\nOptions:\n    -a <file>           Append the new history lines to the history file\n    -c                  Clear the history list. This may be combined with the\n                        other options to replace the history list completely.\n    -d <offset>         Delete the history entry at position offset\n    -r <file>           Read the history file and append its contents to the\n                        history list.\n    -w <file>           Write out the current history list to the history\n                        file.\n    -h, --help          Display help\n")), None));
         assert_eq!(input.len(), 0);
     }
+
+    //TODO: if test
 
     #[test]
     fn test_bash_parser_let() {
