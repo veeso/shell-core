@@ -76,7 +76,7 @@ impl ParseStatement for Bash {
             Ok(argv) => argv,
             Err(err) => return Err(err)
         };
-        self.parse_argv(core, state, argv)
+        self.parse_argv(core, state, &mut argv)
     }
 }
 
@@ -92,7 +92,7 @@ impl Bash {
     /// ### parse_argv
     /// 
     /// Recursive function which parse arguments and evaluates them into a ShellExpression
-    fn parse_argv(&self, core: &ShellCore, mut state: BashParserState, mut input: VecDeque<String>) -> Result<ShellExpression, ParserError> {
+    fn parse_argv(&self, core: &ShellCore, mut state: BashParserState, argv: &mut VecDeque<String>) -> Result<ShellExpression, ParserError> {
         //Start iterating
         let mut statements: Vec<(ShellStatement, TaskRelation)> = Vec::new();
         loop {
@@ -627,7 +627,36 @@ impl Bash {
     }
 
     //TODO: for
-    //TODO: function
+    
+    /// ### parse_function
+    /// 
+    /// parse function arguments
+    fn parse_function(&self, core: &mut ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
+        let function_name: String = match argv.get(0) {
+            Some(name) => name.clone(),
+            None => return Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: syntax error near unexpected newline")))
+        };
+        //Verify next argument is '{'
+        let next_arg: String = match argv.get(1) {
+            Some(arg) => arg.clone(),
+            None => return Err(ParserError::new(ParserErrorCode::BadArgs, String::from("bash: syntax error near unexpected newline")))
+        };
+        if next_arg != "{" {
+            return Err(ParserError::new(ParserErrorCode::BadArgs, format!("bash: syntax error near unexpected token {}", next_arg)))
+        }
+        //Instantiate sub states
+        let mut states: BashParserState = BashParserState::new();
+        //Remove the 2 first arguments
+        argv.pop_front();
+        argv.pop_front();
+        //Evaluate function
+        let function_expr: ShellExpression = match self.parse_argv(core, states, argv) {
+            Ok(expr) => expr,
+            Err(err) => return Err(err)
+        };
+        //Return fuinction
+        Ok(ShellStatement::Function(function_name, function_expr))
+    }
 
     /* TODO: getopts (requires statement getopts) 
     /// ### parse_getopts
@@ -1515,6 +1544,8 @@ mod tests {
         //TODO: parse_argv required for value assignation
         //TODO: -n argument
     }
+
+    //TODO: test function
 
     #[test]
     fn test_bash_parser_history() {
