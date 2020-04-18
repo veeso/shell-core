@@ -50,10 +50,9 @@ struct BashParserState {
 /// Bash Parser Block describes the bash block code type
 #[derive(Clone, PartialEq, std::fmt::Debug)]
 enum BashParserBlock {
+    CodeBlock(BashCodeBlock),
     Escaped,
     Expression(char),   //Character which has been used to start the expression
-    ForLoop,
-    WhileLoop,
     Quoted(char)        //Character which has been used to start quoted
 }
 
@@ -1160,14 +1159,14 @@ impl BashParserState {
     /// 
     /// Returns whether is inside a for loop
     pub(crate) fn is_in_for_loop(&self) -> bool {
-        self.is_on_top(BashParserBlock::ForLoop)
+        self.is_on_top(BashParserBlock::CodeBlock(BashCodeBlock::For))
     }
 
     /// ### open_for_loop
     /// 
     /// Open a for loop, pushing it on the top of the stack
     pub(crate) fn open_for_loop(&mut self) {
-        self.stack_state(BashParserBlock::ForLoop);
+        self.stack_state(BashParserBlock::CodeBlock(BashCodeBlock::For));
     }
 
     /// ### close_for_loop
@@ -1186,14 +1185,14 @@ impl BashParserState {
     /// 
     /// Returns whether is inside a while loop
     pub(crate) fn is_in_while_loop(&self) -> bool {
-        self.is_on_top(BashParserBlock::WhileLoop)
+        self.is_on_top(BashParserBlock::CodeBlock(BashCodeBlock::While))
     }
 
     /// ### open_while_loop
     /// 
     /// Open a while loop, pushing it on the top of the stack
     pub(crate) fn open_while_loop(&mut self) {
-        self.stack_state(BashParserBlock::WhileLoop);
+        self.stack_state(BashParserBlock::CodeBlock(BashCodeBlock::While));
     }
 
     /// ### close_for_loop
@@ -1215,6 +1214,13 @@ impl BashParserState {
         match self.states.last() {
             None => false,
             Some(s) => match s {
+                BashParserBlock::CodeBlock(bl) => {
+                    if let BashParserBlock::CodeBlock(bl_cmp) = state {
+                        *bl == bl_cmp
+                    } else {
+                        false
+                    }
+                }
                 BashParserBlock::Escaped => {
                     if let BashParserBlock::Escaped = state {
                         true
@@ -1229,23 +1235,9 @@ impl BashParserState {
                         false
                     }
                 },
-                BashParserBlock::ForLoop => {
-                    if let BashParserBlock::ForLoop = state {
-                        true
-                    } else {
-                        false
-                    }
-                },
                 BashParserBlock::Quoted(q) => {
                     if let BashParserBlock::Quoted(s_quoted) = state {
                         *q == s_quoted
-                    } else {
-                        false
-                    }
-                },
-                BashParserBlock::WhileLoop => {
-                    if let BashParserBlock::WhileLoop = state {
-                        true
                     } else {
                         false
                     }
@@ -1805,17 +1797,17 @@ mod tests {
         let mut states: BashParserState = BashParserState::new();
         assert!(! states.is_in_for_loop());
         states.open_for_loop();
-        assert!(states.is_on_top(BashParserBlock::ForLoop));
+        assert!(states.is_on_top(BashParserBlock::CodeBlock(BashCodeBlock::For)));
         assert!(states.is_in_for_loop());
         //Open while loop on top
         states.open_while_loop();
-        assert!(! states.is_on_top(BashParserBlock::ForLoop));
-        assert!(states.is_on_top(BashParserBlock::WhileLoop));
+        assert!(! states.is_on_top(BashParserBlock::CodeBlock(BashCodeBlock::For)));
+        assert!(states.is_on_top(BashParserBlock::CodeBlock(BashCodeBlock::While)));
         assert!(states.is_in_while_loop());
         assert!(! states.is_in_for_loop()); //For loop no more on top
         assert!(states.close_for_loop().is_err()); //Can't close for loop before while
         assert!(states.close_while_loop().is_ok());
-        assert!(! states.is_on_top(BashParserBlock::WhileLoop));
+        assert!(! states.is_on_top(BashParserBlock::CodeBlock(BashCodeBlock::While)));
         //Now for loop can be closed
         assert!(states.close_for_loop().is_ok());
     }
