@@ -351,6 +351,29 @@ impl Bash {
         out
     }
 
+    /// ### cut_argv_to_token
+    /// 
+    /// Cut argv until a token is found
+    fn cut_argv_to_token(&self, argv: &mut VecDeque<String>, token: String) -> VecDeque<String> {
+        let mut trunc: usize = 0;
+        for arg in argv.iter() {
+            if *arg == token {
+                break;
+            } else {
+                trunc += 1;
+            }
+        }
+        let mut out: VecDeque<String> = VecDeque::with_capacity(trunc);
+        for i in 0..trunc {
+            if let Some(arg) = argv.pop_front() {
+                out.push_back(arg)
+            }
+        }
+        //Remove token
+        argv.pop_front();
+        out
+    }
+
     //@! Statements parsers
 
     /// ### parse_alias
@@ -728,17 +751,7 @@ impl Bash {
     /// Parse if command expression
     fn parse_if(&self, core: &mut ShellCore, argv: &mut VecDeque<String>) -> Result<ShellStatement, ParserError> {
         //Is expression until a then is found
-        let mut if_condition: VecDeque<String> = VecDeque::new();
-        for arg in argv.iter() {
-            let arg: String = arg.clone();
-            argv.pop_front();
-            //Break on then
-            if arg == "then" {
-                break;
-            }
-            //Otherwise push arg to if condition and pop argv
-            if_condition.push_back(arg);
-        }
+        let mut if_condition: VecDeque<String> = self.cut_argv_to_token(argv, String::from("then"));
         //Instantiate sub states
         let mut states: BashParserState = BashParserState::new();
         let if_condition: ShellExpression = match self.parse_argv(core, states, &mut if_condition) {
