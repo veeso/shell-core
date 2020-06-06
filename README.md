@@ -1,13 +1,23 @@
 # Shell-Core
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](https://opensource.org/licenses/MIT) [![Stars](https://img.shields.io/github/stars/ChristianVisintin/shell-core.svg)](https://github.com/ChristianVisintin/shell-core) [![Issues](https://img.shields.io/github/issues/ChristianVisintin/shell-core.svg)](https://github.com/ChristianVisintin/shell-core/issues) [![Crates.io](https://img.shields.io/badge/crates.io-v0.1.0-orange.svg)](https://crates.io/crates/shell-core) [![Build](https://api.travis-ci.org/ChristianVisintin/shell-core.svg?branch=master)](https://travis-ci.org/ChristianVisintin/shell-core) [![codecov](https://codecov.io/gh/ChristianVisintin/shell-core/branch/master/graph/badge.svg)](https://codecov.io/gh/ChristianVisintin/shell-core)
+[![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](https://opensource.org/licenses/MIT) [![Stars](https://img.shields.io/github/stars/ChristianVisintin/shell-core.svg)](https://github.com/ChristianVisintin/shell-core) [![Issues](https://img.shields.io/github/issues/ChristianVisintin/shell-core.svg)](https://github.com/ChristianVisintin/shell-core/issues) [![Build](https://api.travis-ci.org/ChristianVisintin/shell-core.svg?branch=master)](https://travis-ci.org/ChristianVisintin/shell-core) [![codecov](https://codecov.io/gh/ChristianVisintin/shell-core/branch/master/graph/badge.svg)](https://codecov.io/gh/ChristianVisintin/shell-core)
 
 ~ Shell core library ~  
 Developed by Christian Visintin  
-Current version: 0.1.0 (??/??/2020) **STILL UNDER DEVELOPMENT**
+Current version: **Never released**
+
+⚠ This project is discontinued and won't be updated ⚠
 
 - [Shell-Core](#shell-core)
+  - [Introduction](#introduction)
   - [License](#license)
+
+## Introduction
+
+Shell-Core is a Rust library which provides an API to implement UNIX shells. It provides common and shared functionalities between the most famous shells and the possibility to implement parsers in order to create an interface between the prompt and the shell core.
+
+Since the project has been abandoned, feel free to get the source code of this project for any purpose.
+There's no documentation repo, but all the modules and functions are documented following rustdocs standard.
 
 ## License
 
